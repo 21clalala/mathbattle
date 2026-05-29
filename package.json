@@ -1,0 +1,16 @@
+{
+  "name": "battlezone",
+  "version": "1.0.0",
+  "description": "수업용 실시간 그래프 채점 - 덕형 수학 배틀존",
+  "main": "server.js",
+  "type": "commonjs",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "express": "^4.19.2"
+  }
+}
