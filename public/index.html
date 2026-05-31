@@ -67,7 +67,8 @@
   .feat .fn span{font-weight:400;color:var(--inkSoft)}
   .feat .cm{font-size:14px;color:var(--inkSoft);margin-top:1px}
   .uploadbox{display:flex;flex-direction:column;align-items:center;justify-content:center;width:100%;padding:28px 16px;
-    background:#fff;border:2px dashed var(--line);border-radius:5px;cursor:pointer;text-align:center}
+    background:#fff;border:2px dashed var(--line);border-radius:5px;cursor:pointer;text-align:center;transition:border-color .15s,background .15s}
+  .uploadbox.drag{border-color:var(--ink);background:var(--greenSoft)}
   .preview{width:100%;border-radius:4px;display:block;border:1px solid var(--line)}
   .muted{color:var(--inkSoft);font-size:14px}
   .count{font-family:'Fraunces',serif;font-weight:600;color:var(--inkSoft)}
@@ -138,6 +139,63 @@ function cropImage(file){
   });
 }
 
+// ── 공통 이미지 입력: 파일 선택 + 드래그 끌어오기 + Ctrl+V 붙여넣기 ──
+// 한 영역(box)에 세 입력 방식을 붙이고, 크롭을 거쳐 onDone(dataUrl) 호출.
+function makeImageInput(opts){
+  const box=document.getElementById(opts.boxId);
+  const fileInput=document.getElementById(opts.fileId);
+  if(!box||!fileInput)return null;
+  async function handle(fileOrBlob){
+    if(!fileOrBlob)return;
+    const out=await cropImage(fileOrBlob);
+    if(!out)return;
+    opts.onDone(out);
+    showPreview(out);
+  }
+  function showEmpty(){
+    box.innerHTML='<div class="uploadbox"><div style="font-size:28px">'+(opts.icon||"📷")+'</div>'+
+      '<div style="font-family:\'Fraunces\';font-weight:600;margin-top:6px">'+opts.title+'</div>'+
+      '<div class="muted">'+opts.hint+'</div></div>';
+    bind(box.querySelector(".uploadbox"));
+  }
+  function showPreview(dataUrl){
+    box.innerHTML='<img class="preview" src="'+dataUrl+'"><button class="toggle" style="margin-top:8px">다시 선택</button>';
+    box.querySelector("button").onclick=()=>fileInput.click();
+    bind(box);
+  }
+  function bind(el){
+    el.addEventListener("click",(e)=>{ if(e.target.tagName!=="BUTTON") fileInput.click(); });
+    el.addEventListener("dragover",(e)=>{e.preventDefault();el.classList.add("drag");});
+    el.addEventListener("dragleave",()=>el.classList.remove("drag"));
+    el.addEventListener("drop",(e)=>{e.preventDefault();el.classList.remove("drag");
+      const dt=e.dataTransfer;if(dt&&dt.files&&dt.files.length){
+        const f=[...dt.files].find(x=>x.type.startsWith("image/"));if(f)handle(f);}});
+    el.addEventListener("focusin",()=>{window.__lastFocusTarget=opts.boxId;});
+    el.addEventListener("mouseenter",()=>{window.__lastFocusTarget=opts.boxId;});
+  }
+  fileInput.onchange=(e)=>{const f=e.target.files&&e.target.files[0];if(f)handle(f);e.target.value="";};
+  showEmpty();
+  return {id:opts.boxId,handle,showEmpty,showPreview};
+}
+// 화면당 붙여넣기 핸들러 하나만 유지. targets: makeImageInput 반환 객체 배열
+function setPasteTargets(targets){
+  if(window.__activePaste)document.removeEventListener("paste",window.__activePaste);
+  targets=(targets||[]).filter(Boolean);
+  if(!targets.length){window.__activePaste=null;return;}
+  const h=(e)=>{
+    const items=(e.clipboardData&&e.clipboardData.items)||[];
+    for(const it of items){
+      if(it.type&&it.type.startsWith("image/")){
+        const blob=it.getAsFile();
+        if(blob){e.preventDefault();
+          const t=targets.find(x=>x.id===window.__lastFocusTarget)||targets[0];
+          t.handle(blob);return;}
+      }
+    }
+  };
+  window.__activePaste=h;document.addEventListener("paste",h);
+}
+
 // ── 수식 편집기 ──
 const MATH_BTNS=[
   ["x²","^{2}"],["xⁿ","^{}"],["√","\\sqrt{}"],["a/b","\\frac{}{}"],
@@ -159,6 +217,7 @@ function insertAtCursor(input,text){
 
 // ── 랜딩 ──
 function landing(){
+  if(window.__activePaste){document.removeEventListener("paste",window.__activePaste);window.__activePaste=null;}
   app().innerHTML='<div class="card"><h2>어떻게 시작할까요?</h2><div class="big-btns">'+
     '<div class="pick" onclick="teacherCreate()"><div class="t">선생님</div><div class="d">문제 내고 실시간 순위 보기</div></div>'+
     '<div class="pick" onclick="studentJoin()"><div class="t">학생</div><div class="d">코드로 참여해 답안 제출</div></div>'+
@@ -171,30 +230,28 @@ function teacherCreate(){
   teacherProblemImg=null;teacherAnswerImg=null;
   app().innerHTML=
   '<div class="card"><h2>문제 만들기</h2>'+
-  '<div class="field"><label>문제 사진 (교재·학습지를 찍어 올리고 필요한 부분만 잘라내세요)</label>'+
-    '<input id="pfile" type="file" accept="image/*" style="display:none" onchange="pickProblem(event)" />'+
-    '<div id="pimg"><div class="uploadbox" onclick="$(\'#pfile\').click()"><div style="font-size:28px">📷</div>'+
-    '<div style="font-family:\'Fraunces\';font-weight:600;margin-top:6px">문제 사진 올리기</div><div class="muted">또는 아래에 글로 입력</div></div></div></div>'+
+  '<div class="field"><label>문제 — 사진 올리기 · 캡처 끌어오기 · Ctrl+V 붙여넣기 모두 됩니다. 올린 뒤 필요한 부분만 잘라낼 수 있어요.</label>'+
+    '<input id="pfile" type="file" accept="image/*" style="display:none" />'+
+    '<div id="pbox"></div></div>'+
   '<div class="field"><label>문제 글 (선택 — 사진 대신/함께 쓸 수 있어요)</label>'+
     '<textarea id="ptext" rows="2" placeholder="예) y = x ln x 의 그래프 개형을 미분을 이용하여 그리시오."></textarea></div>'+
-  '<div class="field"><label>모범답안 — 정답 함수를 수식으로 넣거나, 모범답안 사진을 올리세요. <b>비워두면 AI가 스스로 모범답안을 만들어 채점합니다.</b></label>'+
+  '<div class="field"><label>모범답안 — 정답 함수를 수식으로 넣거나, 모범답안 이미지를 올리세요(끌어오기·붙여넣기 가능). <b>비워두면 AI가 스스로 모범답안을 만들어 채점합니다.</b></label>'+
     '<div class="mathbar" id="mathbar"></div>'+
     '<input id="atext" placeholder="예) y = x \\ln x  (정의역 x>0)" oninput="updMath()" />'+
     '<div class="mpreview" id="mprev"></div>'+
-    '<div style="margin-top:10px"><input id="afile" type="file" accept="image/*" style="display:none" onchange="pickAnswer(event)" />'+
-    '<div id="aimg"><button class="toggle" onclick="$(\'#afile\').click()">＋ 모범답안 사진 올리기 (선택)</button></div></div></div>'+
+    '<input id="afile" type="file" accept="image/*" style="display:none" />'+
+    '<div id="abox" style="margin-top:10px"></div></div>'+
   '<button class="btn block" id="startBtn" onclick="createSession()">수업 시작</button>'+
   '<p class="muted" id="cmsg" style="margin-top:10px"></p><div id="cerr"></div></div>';
   const bar=$("#mathbar");
   MATH_BTNS.forEach(([label,tex])=>{const b=document.createElement("button");b.type="button";b.textContent=label;
     b.onclick=()=>{insertAtCursor($("#atext"),tex);updMath();};bar.appendChild(b);});
   updMath();
+  const pIn=makeImageInput({boxId:"pbox",fileId:"pfile",title:"문제 이미지 올리기 / 끌어오기 / 붙여넣기",hint:"교재·학습지 사진, 화면 캡처 모두 가능",onDone:(d)=>{teacherProblemImg=d;}});
+  const aIn=makeImageInput({boxId:"abox",fileId:"afile",title:"＋ 모범답안 이미지 (선택)",hint:"끌어오기·Ctrl+V·파일 선택",icon:"✏️",onDone:(d)=>{teacherAnswerImg=d;}});
+  setPasteTargets([pIn,aIn]);
 }
 function updMath(){renderMath($("#atext").value,$("#mprev"));}
-async function pickProblem(e){const f=e.target.files[0];if(!f)return;const out=await cropImage(f);if(!out)return;teacherProblemImg=out;
-  $("#pimg").innerHTML='<img class="preview" src="'+out+'"><button class="toggle" style="margin-top:8px" onclick="$(\'#pfile\').click()">다시 선택</button>';}
-async function pickAnswer(e){const f=e.target.files[0];if(!f)return;const out=await cropImage(f);if(!out)return;teacherAnswerImg=out;
-  $("#aimg").innerHTML='<img class="preview" src="'+out+'"><button class="toggle" style="margin-top:8px" onclick="$(\'#afile\').click()">다시 선택</button>';}
 async function createSession(){
   const problemText=$("#ptext").value.trim();
   const answerText=$("#atext").value.trim();
@@ -221,6 +278,7 @@ function saveLocal(){
   }catch(e){}
 }
 function teacherDash(){
+  if(window.__activePaste){document.removeEventListener("paste",window.__activePaste);window.__activePaste=null;}
   const link=location.origin+"/?s="+st.code;
   // 새로고침 복구
   try{
@@ -322,14 +380,13 @@ function studentSolve(){
   '<div class="card"><div class="field" style="display:flex;gap:10px">'+
   '<div style="flex:1"><label>학번</label><input id="sid" inputmode="numeric" placeholder="10130" /></div>'+
   '<div style="flex:1.4"><label>이름</label><input id="sname" placeholder="홍길동" /></div></div>'+
-  '<label>답안 사진 — 그래프와 도함수 계산을 함께 찍으면 더 정확해요. 올린 뒤 필요한 부분만 잘라낼 수 있어요.</label>'+
-  '<input id="file" type="file" accept="image/*" capture="environment" style="display:none" onchange="pickStudent(event)" />'+
-  '<div id="up"><div class="uploadbox" onclick="$(\'#file\').click()"><div style="font-size:30px">📷</div>'+
-  '<div style="font-family:\'Fraunces\';font-weight:600;margin-top:6px">답안 사진 촬영 / 선택</div><div class="muted">축과 눈금이 보이게</div></div></div>'+
+  '<label>답안 — 사진 촬영·올리기, 태블릿 화면 끌어오기, Ctrl+V 붙여넣기 모두 됩니다. 올린 뒤 필요한 부분만 잘라낼 수 있어요.</label>'+
+  '<input id="file" type="file" accept="image/*" capture="environment" style="display:none" />'+
+  '<div id="sbox"></div>'+
   '<button class="btn block" id="subBtn" style="margin-top:16px" onclick="submitSolve()">채점받기</button><div id="serr"></div></div>';
+  const sIn=makeImageInput({boxId:"sbox",fileId:"file",title:"답안 사진 촬영 / 올리기 / 붙여넣기",hint:"축과 눈금이 보이게",onDone:(d)=>{studentImg=d;}});
+  setPasteTargets([sIn]);
 }
-async function pickStudent(e){const f=e.target.files[0];if(!f)return;const out=await cropImage(f);if(!out)return;studentImg=out;
-  $("#up").innerHTML='<img class="preview" src="'+out+'"><button class="toggle" style="margin-top:10px" onclick="$(\'#file\').click()">다른 사진</button>';}
 async function submitSolve(){
   const studentId=$("#sid").value.trim(),name=$("#sname").value.trim();
   if(!studentId||!name){$("#serr").innerHTML='<p class="err">학번과 이름을 입력해 주세요.</p>';return;}
