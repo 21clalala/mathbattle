@@ -75,7 +75,7 @@
   .modal{position:fixed;inset:0;background:rgba(20,16,12,.6);display:flex;align-items:center;justify-content:center;padding:18px;z-index:50}
   .modal .inner{background:var(--paper);border-radius:6px;max-width:600px;width:100%;max-height:90vh;overflow:auto;padding:20px;border:2px solid var(--ink)}
   .toggle{font-size:14px;color:var(--ink);background:transparent;border:1px solid var(--line);border-radius:3px;padding:6px 10px;cursor:pointer}
-  pre.sol{white-space:pre-wrap;font-family:'Newsreader',serif;font-size:15px;line-height:1.6;background:#fff;border:1px solid var(--line);border-radius:4px;padding:13px;margin:8px 0 0}
+  .sol{white-space:pre-wrap;font-family:'Newsreader',serif;font-size:15px;line-height:1.7;background:#fff;border:1px solid var(--line);border-radius:4px;padding:13px;margin:8px 0 0}
   .err{color:var(--red);margin-top:12px}
   .scoreline{display:flex;align-items:baseline;gap:10px;margin:4px 0 12px}
   .scoreline .pts{font-family:'Fraunces',serif;font-weight:900;font-size:40px}
@@ -219,6 +219,36 @@ function insertAtCursor(input,text){
   const caret=text.indexOf("{}")>=0?s+text.indexOf("{}")+1:s+text.length;
   input.focus();input.setSelectionRange(caret,caret);
 }
+// 텍스트 안의 $...$ / $$...$$ 를 KaTeX로 렌더링해 안전한 HTML 문자열로 반환.
+// 수식 밖 일반 텍스트는 escape 처리하고 줄바꿈은 <br>로.
+function mathText(s){
+  if(s==null)return"";
+  const str=String(s);
+  let out="",i=0;
+  while(i<str.length){
+    // $$...$$ (블록) 먼저
+    if(str[i]==="$"&&str[i+1]==="$"){
+      const end=str.indexOf("$$",i+2);
+      if(end>-1){const tex=str.slice(i+2,end);
+        try{out+=katex.renderToString(tex,{throwOnError:false,displayMode:true});}
+        catch(e){out+=escNl(str.slice(i,end+2));}
+        i=end+2;continue;}
+    }
+    if(str[i]==="$"){
+      const end=str.indexOf("$",i+1);
+      if(end>-1){const tex=str.slice(i+1,end);
+        try{out+=katex.renderToString(tex,{throwOnError:false,displayMode:false});}
+        catch(e){out+=escNl(str.slice(i,end+1));}
+        i=end+1;continue;}
+    }
+    // 다음 $ 까지 일반 텍스트 (현재 위치가 $이지만 짝이 없으면 그 글자만 출력)
+    if(str[i]==="$"){out+="$";i++;continue;}
+    let next=str.indexOf("$",i);if(next<0)next=str.length;
+    out+=escNl(str.slice(i,next));i=next;
+  }
+  return out;
+}
+function escNl(t){return t.replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c])).replace(/\n/g,"<br>");}
 
 // ── 랜딩 ──
 function landing(){
@@ -336,23 +366,23 @@ function renderBoard(){
   const top=lb[0];
   banner.innerHTML='<div class="banner"><span class="crown">👑</span><div style="flex:1">'+
     '<div class="muted" style="font-size:13px">1위</div><div class="who">'+esc(top.name)+' <small style="color:var(--inkSoft);font-weight:400">'+esc(top.studentId)+'</small></div>'+
-    (top.strength?'<div class="muted" style="font-size:13px;margin-top:2px">잘한 점: '+esc(top.strength)+'</div>':'')+'</div>'+
+    (top.strength?'<div class="muted" style="font-size:13px;margin-top:2px">잘한 점: '+mathText(top.strength)+'</div>':'')+'</div>'+
     '<div class="sc" style="font-size:24px;color:var(--gold);font-family:\'Fraunces\'">'+top.score+'점</div></div>';
   board.innerHTML=lb.slice(0,showN).map((x,i)=>'<div class="row '+(i===0?'top':'')+'" onclick="openDetail(\''+esc(x.studentId)+'\')">'+
     '<div class="rank">'+(i+1)+'</div><div class="nm">'+esc(x.name)+'<small>'+esc(x.studentId)+'</small>'+
-    (x.strength?'<div class="muted" style="font-size:12px;font-weight:400;margin-top:2px">'+esc(x.strength)+'</div>':'')+
+    (x.strength?'<div class="muted" style="font-size:12px;font-weight:400;margin-top:2px">'+mathText(x.strength)+'</div>':'')+
     '</div>'+badge(x.verdict)+'<div class="sc">'+x.score+'점</div></div>').join("")+
     (showN<lb.length?'<p class="muted" style="text-align:center;margin-top:8px">··· 그 외 '+(lb.length-showN)+'명 (가려짐)</p>':'');
 }
 async function openDetail(sid){
   try{const r=await fetch("/api/sessions/"+st.code+"/submission/"+encodeURIComponent(sid));const x=await r.json();if(!r.ok)throw new Error(x.error||"오류");
-    const feats=(x.features||[]).map(f=>'<div class="feat"><span class="mk '+(f.ok?'ok':'no')+'">'+(f.ok?'○':'✕')+'</span><div><div class="fn">'+esc(f.name)+(f.expected?' <span>— '+esc(f.expected)+'</span>':'')+'</div>'+(f.comment?'<div class="cm">'+esc(f.comment)+'</div>':'')+'</div></div>').join("");
+    const feats=(x.features||[]).map(f=>'<div class="feat"><span class="mk '+(f.ok?'ok':'no')+'">'+(f.ok?'○':'✕')+'</span><div><div class="fn">'+mathText(f.name)+(f.expected?' <span>— '+mathText(f.expected)+'</span>':'')+'</div>'+(f.comment?'<div class="cm">'+mathText(f.comment)+'</div>':'')+'</div></div>').join("");
     const m=document.createElement("div");m.className="modal";m.onclick=(e)=>{if(e.target===m)m.remove();};
     m.innerHTML='<div class="inner"><div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">'+
       '<h2 style="margin:0">'+esc(x.name)+' <small style="color:var(--inkSoft);font-size:15px">'+esc(x.studentId)+'</small></h2>'+
       '<button class="toggle" onclick="this.closest(\'.modal\').remove()">닫기</button></div>'+
       '<div style="display:flex;align-items:baseline;gap:10px;margin-bottom:12px">'+badge(x.verdict)+'<span class="sc" style="font-family:\'Fraunces\';font-weight:900;font-size:26px">'+x.score+'점</span><span class="muted">'+x.okCount+'/'+x.total+' 항목</span></div>'+
-      (x.summary?'<p style="margin:0 0 12px">'+esc(x.summary)+'</p>':'')+
+      (x.summary?'<p style="margin:0 0 12px">'+mathText(x.summary)+'</p>':'')+
       '<img class="preview" src="'+esc(x.image)+'" style="margin-bottom:12px">'+feats+
       answerGraphHTML(x.answerGraph)+'</div>';
     document.body.appendChild(m);drawAnswerGraph(x.answerGraph);
@@ -404,18 +434,18 @@ async function submitSolve(){
   }catch(e){$("#serr").innerHTML='<p class="err">'+esc(e.message)+'</p>';b.disabled=false;b.textContent="채점받기";}
 }
 function studentResult(d){
-  const feats=(d.features||[]).map(f=>'<div class="feat"><span class="mk '+(f.ok?'ok':'no')+'">'+(f.ok?'○':'✕')+'</span><div><div class="fn">'+esc(f.name)+(f.expected?' <span>— '+esc(f.expected)+'</span>':'')+'</div>'+(f.comment?'<div class="cm">'+esc(f.comment)+'</div>':'')+'</div></div>').join("");
+  const feats=(d.features||[]).map(f=>'<div class="feat"><span class="mk '+(f.ok?'ok':'no')+'">'+(f.ok?'○':'✕')+'</span><div><div class="fn">'+mathText(f.name)+(f.expected?' <span>— '+mathText(f.expected)+'</span>':'')+'</div>'+(f.comment?'<div class="cm">'+mathText(f.comment)+'</div>':'')+'</div></div>').join("");
   app().innerHTML='<div class="card"><h2 style="margin-bottom:6px">'+esc(st.student.name)+' 학생의 채점 결과</h2>'+
     '<div class="scoreline">'+badge(d.verdict)+'<span class="pts">'+d.score+'점</span><span class="muted">'+d.okCount+'/'+d.total+' 항목 정답</span></div>'+
-    (d.summary?'<p style="font-size:16px;line-height:1.55;margin:0 0 14px">'+esc(d.summary)+'</p>':'')+
-    (d.strength?'<div class="strength-tag">잘한 점: '+esc(d.strength)+'</div>':'')+
+    (d.summary?'<p style="font-size:16px;line-height:1.55;margin:0 0 14px">'+mathText(d.summary)+'</p>':'')+
+    (d.strength?'<div class="strength-tag">잘한 점: '+mathText(d.strength)+'</div>':'')+
     '<h2 style="font-size:17px;margin-top:14px">'+(d.type==="calc"?"채점 항목":"특징별 채점")+'</h2><div style="border:1px solid var(--line);border-radius:4px;padding:0 13px">'+feats+'</div>'+
     answerGraphHTML(d.answerGraph)+
-    (d.correctSolution?'<button class="toggle" style="margin-top:14px" onclick="toggleSol(this)">정답 풀이 글로 보기</button><pre class="sol" id="sol" style="display:none">'+esc(d.correctSolution)+'</pre>':'')+
+    (d.correctSolution?'<button class="toggle" style="margin-top:14px" onclick="toggleSol(this)">정답 풀이 보기</button><div class="sol" id="sol" style="display:none">'+mathText(d.correctSolution)+'</div>':'')+
     '<button class="btn block ghost" style="margin-top:16px" onclick="studentSolve()">다시 풀어서 제출하기</button></div>';
   drawAnswerGraph(d.answerGraph);
 }
-function toggleSol(b){const el=$("#sol");const on=el.style.display==="none";el.style.display=on?"block":"none";b.textContent=on?"정답 풀이 닫기":"정답 풀이 글로 보기";}
+function toggleSol(b){const el=$("#sol");const on=el.style.display==="none";el.style.display=on?"block":"none";b.textContent=on?"정답 풀이 닫기":"정답 풀이 보기";}
 
 // ── 정답 그래프 그리기 ──
 function answerGraphHTML(g){

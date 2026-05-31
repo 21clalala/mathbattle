@@ -178,6 +178,7 @@ async function grade(s, studentImage) {
     "■ 문제가 '그래프 개형을 그리는 문제'라면: type을 \"graph\"로 하고, 핵심 특징(정의역, 절편, 극값의 위치·종류, 증감, 오목·볼록, 변곡점, 점근 거동 등)이 학생 그래프에 올바르게 반영됐는지 항목별(features)로 채점하세요. 손그림이므로 정확한 좌표값보다 특징이 맞는지를 봅니다.\n\n" +
     "■ 그 외 일반 계산·증명·서술형 문제라면: type을 \"calc\"로 하고, 풀이 단계와 최종 답이 맞는지를 단계별(features의 name을 '1단계: ...' 식으로)로 채점하거나, 핵심 채점 포인트별로 채점하세요. 최종 답이 맞는지 반드시 확인하세요.\n\n" +
     "공통: 모범답안이 있으면 그것을 기준으로 비교하세요. 틀린 부분은 어디서 왜 틀렸는지 짚고, 불분명하면 해당 항목 ok를 false로 두고 이유를 적으세요. strength에는 학생이 특히 잘한 점을 한 줄로 요약(없으면 빈 문자열)하세요.\n\n" +
+    "수식 표기 규칙(중요): summary, features의 expected와 comment, correctSolution 안에서 수식·수학 기호는 반드시 LaTeX로 쓰고 달러기호로 감싸세요. 인라인은 $...$, 따로 떼는 식은 $$...$$. 예: $f'(x)=\\ln x+1$, $x=\\frac{1}{e}$, $\\int_0^1 x^2\\,dx=\\frac{1}{3}$, $\\lim_{x\\to0^+}$. 분수는 x/y 대신 $\\frac{x}{y}$, 거듭제곱은 x^2 대신 $x^2$로 쓰세요. 일반 한국어 설명은 달러기호 밖에 그대로 두세요.\n\n" +
     "반드시 아래 JSON만 출력(마크다운·백틱 금지):\n{\n \"type\": \"graph\" | \"calc\",\n \"verdict\": \"correct\" | \"incorrect\" | \"partial\" | \"unclear\",\n \"summary\": \"한두 문장 채점 요약(한국어)\",\n \"strength\": \"이 학생이 잘한 점 한 줄 요약(한국어)\",\n \"features\": [{\"name\":\"특징명 또는 단계명\",\"expected\":\"정답 기준\",\"ok\":true,\"comment\":\"한 줄 평(한국어)\"}],\n \"correctSolution\": \"올바른 풀이 또는 그래프 개형 설명(한국어)\"\n}";
   content.push({ type: "text", text });
   return callClaude(content, 2500);
