@@ -68,7 +68,30 @@ function makeCode() {
   return c;
 }
 
-async function callClaude(content, maxTokens) {
+function extractJson(txt) {
+  if (!txt) throw new Error("empty response");
+  let s = txt.replace(/```json/gi, "").replace(/```/g, "").trim();
+  // 첫 { 부터 짝이 맞는 } 까지만 추출 (앞뒤 설명이 붙어도 견딤)
+  const start = s.indexOf("{");
+  if (start < 0) throw new Error("no json object");
+  let depth = 0, inStr = false, esc = false, end = -1;
+  for (let i = start; i < s.length; i++) {
+    const c = s[i];
+    if (inStr) {
+      if (esc) esc = false;
+      else if (c === "\\") esc = true;
+      else if (c === '"') inStr = false;
+    } else {
+      if (c === '"') inStr = true;
+      else if (c === "{") depth++;
+      else if (c === "}") { depth--; if (depth === 0) { end = i; break; } }
+    }
+  }
+  if (end < 0) throw new Error("unbalanced json");
+  return JSON.parse(s.slice(start, end + 1));
+}
+
+async function callClaudeOnce(content, maxTokens) {
   const r = await fetch("https://api.anthropic.com/v1/messages", {
     method: "POST",
     headers: {
@@ -81,7 +104,17 @@ async function callClaude(content, maxTokens) {
   if (!r.ok) throw new Error("Anthropic " + r.status + " " + (await r.text()).slice(0, 300));
   const data = await r.json();
   const txt = (data.content || []).filter((b) => b.type === "text").map((b) => b.text).join("\n");
-  return JSON.parse(txt.replace(/```json|```/g, "").trim());
+  return extractJson(txt);
+}
+
+async function callClaude(content, maxTokens) {
+  try {
+    return await callClaudeOnce(content, maxTokens);
+  } catch (e) {
+    // 형식 오류 등으로 실패하면 한 번 더 시도
+    console.error("[claude retry]", e.message);
+    return await callClaudeOnce(content, maxTokens);
+  }
 }
 
 function imgBlock(dataUrl) {
