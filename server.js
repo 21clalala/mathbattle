@@ -16,13 +16,14 @@ const SB_ON = !!(SB_URL && SB_KEY);
 const HISTORY_PASSWORD = process.env.HISTORY_PASSWORD || "";
 
 async function sbFetch(pathAndQuery, options) {
-  const r = await fetch(SB_URL + "/rest/v1/" + pathAndQuery, Object.assign({
-    headers: Object.assign({
-      "apikey": SB_KEY,
-      "Authorization": "Bearer " + SB_KEY,
-      "Content-Type": "application/json",
-    }, (options && options.headers) || {}),
-  }, options || {}));
+  options = options || {};
+  const headers = Object.assign({
+    "apikey": SB_KEY,
+    "Authorization": "Bearer " + SB_KEY,
+    "Content-Type": "application/json",
+  }, options.headers || {});
+  const r = await fetch(SB_URL + "/rest/v1/" + pathAndQuery,
+    Object.assign({}, options, { headers: headers }));
   if (!r.ok) throw new Error("Supabase " + r.status + " " + (await r.text()).slice(0, 300));
   const txt = await r.text();
   return txt ? JSON.parse(txt) : null;
