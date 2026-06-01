@@ -256,8 +256,71 @@ function landing(){
   app().innerHTML='<div class="card"><h2>어떻게 시작할까요?</h2><div class="big-btns">'+
     '<div class="pick" onclick="teacherCreate()"><div class="t">선생님</div><div class="d">문제 내고 실시간 순위 보기</div></div>'+
     '<div class="pick" onclick="studentJoin()"><div class="t">학생</div><div class="d">코드로 참여해 답안 제출</div></div>'+
-    '</div></div>';
+    '</div>'+
+    '<div style="text-align:center;margin-top:16px"><button class="toggle" onclick="historyLogin()">📁 지난 기록 보기 (선생님)</button></div>'+
+    '</div>';
 }
+
+// ── 지난 기록 보기 (선생님 전용) ──
+let historyPw="";
+function historyLogin(){
+  if(window.__activePaste){document.removeEventListener("paste",window.__activePaste);window.__activePaste=null;}
+  app().innerHTML='<div class="card"><h2>지난 기록 보기</h2>'+
+    '<p class="muted" style="margin-top:-6px">선생님 전용입니다. 비밀번호를 입력하세요.</p>'+
+    '<div class="field"><input id="hpw" type="password" placeholder="비밀번호" onkeydown="if(event.key===\'Enter\')historyOpen()" /></div>'+
+    '<button class="btn block" onclick="historyOpen()">열기</button><div id="herr"></div></div>';
+}
+async function historyOpen(){
+  const pw=$("#hpw").value;
+  if(!pw){$("#herr").innerHTML='<p class="err">비밀번호를 입력하세요.</p>';return;}
+  try{
+    const r=await fetch("/api/history/sessions",{headers:{"x-history-password":pw}});
+    const d=await r.json();
+    if(!r.ok)throw new Error(d.error||"오류");
+    historyPw=pw;
+    renderHistoryList(d.sessions||[]);
+  }catch(e){$("#herr").innerHTML='<p class="err">'+esc(e.message)+'</p>';}
+}
+function renderHistoryList(list){
+  const rows=list.length?list.map(s=>{
+    const when=s.created_at?new Date(s.created_at).toLocaleString("ko-KR"):"";
+    const title=(s.problem_text&&s.problem_text.trim())?esc(s.problem_text.slice(0,40)):"(사진 문제)";
+    return '<div class="row" onclick="historyDetail(\''+esc(s.code)+'\')"><div class="rank" style="width:auto;color:var(--red)">'+esc(s.code)+'</div>'+
+      '<div class="nm">'+title+'<small style="display:block;margin:2px 0 0">'+when+'</small></div></div>';
+  }).join(""):'<p class="muted">저장된 수업이 없어요.</p>';
+  app().innerHTML='<div class="card"><div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">'+
+    '<h2 style="margin:0">지난 수업</h2><button class="toggle" onclick="landing()">처음으로</button></div>'+
+    '<p class="muted" style="margin-bottom:14px">수업을 누르면 학생 답안과 채점 결과를 볼 수 있어요.</p>'+rows+'</div>';
+}
+async function historyDetail(code){
+  try{
+    const r=await fetch("/api/history/sessions/"+code,{headers:{"x-history-password":historyPw}});
+    const d=await r.json();
+    if(!r.ok)throw new Error(d.error||"오류");
+    const sess=d.session||{};
+    const subs=d.submissions||[];
+    const probImg=sess.problem_image?'<img class="preview" src="'+sess.problem_image+'" style="margin-bottom:8px">':'';
+    const probTxt=sess.problem_text?'<p style="margin:0 0 10px">'+esc(sess.problem_text)+'</p>':'';
+    const rows=subs.length?subs.map((x,i)=>{
+      const feats=(x.features||[]).map(f=>'<div class="feat"><span class="mk '+(f.ok?'ok':'no')+'">'+(f.ok?'○':'✕')+'</span><div><div class="fn">'+mathText(f.name)+(f.expected?' <span>— '+mathText(f.expected)+'</span>':'')+'</div>'+(f.comment?'<div class="cm">'+mathText(f.comment)+'</div>':'')+'</div></div>').join("");
+      return '<div class="card" style="background:#fff"><div style="display:flex;align-items:baseline;gap:10px;margin-bottom:8px">'+
+        '<span class="rank" style="width:auto;color:var(--gold)">'+(i+1)+'위</span>'+
+        '<b>'+esc(x.name)+'</b><small style="color:var(--inkSoft)">'+esc(x.student_id)+'</small>'+badge(x.verdict)+
+        '<span class="sc" style="margin-left:auto;font-family:\'Fraunces\';font-weight:700">'+x.score+'점</span></div>'+
+        (x.summary?'<p style="margin:0 0 8px">'+mathText(x.summary)+'</p>':'')+
+        (x.image?'<img class="preview" src="'+x.image+'" style="margin-bottom:8px">':'')+
+        feats+'</div>';
+    }).join(""):'<p class="muted">제출 기록이 없어요.</p>';
+    app().innerHTML='<div class="card"><div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">'+
+      '<h2 style="margin:0">수업 '+esc(code)+'</h2><div><button class="toggle" onclick="downloadHistoryCsv(\''+esc(code)+'\')">CSV</button> '+
+      '<button class="toggle" onclick="historyOpen()">목록</button></div></div>'+
+      probImg+probTxt+'</div>'+rows;
+  }catch(e){alert(e.message);}
+}
+function downloadHistoryCsv(code){
+  window.open("/api/history/sessions/"+code+"/csv?pw="+encodeURIComponent(historyPw),"_blank");
+}
+
 
 // ── 선생님: 출제 ──
 let teacherProblemImg=null, teacherAnswerImg=null;

@@ -8,6 +8,56 @@ app.use(express.static(path.join(__dirname, "public")));
 const API_KEY = process.env.ANTHROPIC_API_KEY;
 const MODEL = process.env.MODEL || "claude-sonnet-4-6";
 
+// ── Supabase (REST API 직접 호출, 추가 패키지 불필요) ──
+const SB_URL = (process.env.SUPABASE_URL || "").replace(/\/$/, "");
+const SB_KEY = process.env.SUPABASE_SECRET_KEY || "";
+const SB_ON = !!(SB_URL && SB_KEY);
+// 지난 기록 보기 잠금 비밀번호
+const HISTORY_PASSWORD = process.env.HISTORY_PASSWORD || "";
+
+async function sbFetch(pathAndQuery, options) {
+  const r = await fetch(SB_URL + "/rest/v1/" + pathAndQuery, Object.assign({
+    headers: Object.assign({
+      "apikey": SB_KEY,
+      "Authorization": "Bearer " + SB_KEY,
+      "Content-Type": "application/json",
+    }, (options && options.headers) || {}),
+  }, options || {}));
+  if (!r.ok) throw new Error("Supabase " + r.status + " " + (await r.text()).slice(0, 300));
+  const txt = await r.text();
+  return txt ? JSON.parse(txt) : null;
+}
+// 수업 저장(있으면 갱신)
+async function sbSaveSession(s) {
+  if (!SB_ON) return;
+  try {
+    await sbFetch("sessions", {
+      method: "POST",
+      headers: { "Prefer": "resolution=merge-duplicates" },
+      body: JSON.stringify({
+        code: s.code, problem_text: s.problemText, problem_image: s.problemImage,
+        answer_text: s.answerText, answer_graph: s.answerGraph,
+      }),
+    });
+  } catch (e) { console.error("[sb session]", e.message); }
+}
+// 제출 저장(같은 code+student_id면 갱신)
+async function sbSaveSubmission(code, x) {
+  if (!SB_ON) return;
+  try {
+    await sbFetch("submissions?on_conflict=code,student_id", {
+      method: "POST",
+      headers: { "Prefer": "resolution=merge-duplicates" },
+      body: JSON.stringify({
+        code, student_id: x.studentId, name: x.name, verdict: x.verdict,
+        score: x.score, ok_count: x.okCount, total: x.total, summary: x.summary,
+        strength: x.strength, features: x.features, correct_solution: x.correctSolution,
+        image: x.image, submitted_at: new Date(x.submittedAt).toISOString(),
+      }),
+    });
+  } catch (e) { console.error("[sb submission]", e.message); }
+}
+
 const sessions = new Map();
 
 const ALPHA = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
@@ -77,6 +127,7 @@ app.post("/api/sessions", async (req, res) => {
   };
   sessions.set(code, s);
   s.answerGraph = await buildAnswerGraph(s);
+  await sbSaveSession(s);
   res.json({ code });
 });
 
@@ -109,6 +160,7 @@ app.post("/api/sessions/:code/submit", async (req, res) => {
       image, submittedAt: Date.now(),
     };
     s.submissions.set(sub.studentId, sub);
+    await sbSaveSubmission(s.code, sub);
     res.json({
       verdict: sub.verdict, score, okCount, total: sub.total,
       summary: sub.summary, features: sub.features,
@@ -162,6 +214,54 @@ app.get("/api/sessions/:code/csv", (req, res) => {
   res.setHeader("Content-Type", "text/csv; charset=utf-8");
   res.setHeader("Content-Disposition", 'attachment; filename="mathbattle_' + s.code + '.csv"');
   res.send(csv);
+});
+
+// ── 지난 기록 보기 (선생님 전용, 비밀번호 잠금) ──
+function checkPassword(req, res) {
+  if (!HISTORY_PASSWORD) { res.status(503).json({ error: "기록 보기 비밀번호가 서버에 설정되지 않았어요." }); return false; }
+  const pw = req.get("x-history-password") || req.query.pw || "";
+  if (pw !== HISTORY_PASSWORD) { res.status(401).json({ error: "비밀번호가 올바르지 않아요." }); return false; }
+  return true;
+}
+// 지난 수업 목록
+app.get("/api/history/sessions", async (req, res) => {
+  if (!checkPassword(req, res)) return;
+  if (!SB_ON) return res.status(503).json({ error: "데이터베이스가 연결되지 않았어요." });
+  try {
+    const list = await sbFetch("sessions?select=code,problem_text,created_at&order=created_at.desc&limit=200");
+    res.json({ sessions: list || [] });
+  } catch (e) { res.status(500).json({ error: "기록을 불러오지 못했어요." }); }
+});
+// 특정 수업의 제출 목록(채점 결과+사진)
+app.get("/api/history/sessions/:code", async (req, res) => {
+  if (!checkPassword(req, res)) return;
+  if (!SB_ON) return res.status(503).json({ error: "데이터베이스가 연결되지 않았어요." });
+  const code = (req.params.code || "").toUpperCase();
+  try {
+    const sess = await sbFetch("sessions?code=eq." + encodeURIComponent(code) + "&select=*");
+    const subs = await sbFetch("submissions?code=eq." + encodeURIComponent(code) + "&select=*&order=score.desc,submitted_at.asc");
+    res.json({ session: (sess && sess[0]) || null, submissions: subs || [] });
+  } catch (e) { res.status(500).json({ error: "기록을 불러오지 못했어요." }); }
+});
+// 지난 수업 CSV
+app.get("/api/history/sessions/:code/csv", async (req, res) => {
+  if (!checkPassword(req, res)) return;
+  if (!SB_ON) return res.status(503).send("DB 없음");
+  const code = (req.params.code || "").toUpperCase();
+  try {
+    const subs = await sbFetch("submissions?code=eq." + encodeURIComponent(code) + "&select=*&order=score.desc,submitted_at.asc") || [];
+    const head = ["순위", "학번", "이름", "점수", "판정", "정답항목", "전체항목", "강점요약", "채점요약", "제출시각"];
+    const vk = { correct: "정답", incorrect: "오답", partial: "부분", unclear: "판독" };
+    const rows = subs.map((x, i) => [
+      i + 1, x.student_id, x.name, x.score, vk[x.verdict] || x.verdict,
+      x.ok_count, x.total, x.strength || "", x.summary || "",
+      new Date(x.submitted_at).toLocaleString("ko-KR"),
+    ].map(csvCell).join(","));
+    const csv = "\uFEFF" + [head.map(csvCell).join(","), ...rows].join("\r\n");
+    res.setHeader("Content-Type", "text/csv; charset=utf-8");
+    res.setHeader("Content-Disposition", 'attachment; filename="mathbattle_' + code + '.csv"');
+    res.send(csv);
+  } catch (e) { res.status(500).send("오류"); }
 });
 
 async function grade(s, studentImage) {
