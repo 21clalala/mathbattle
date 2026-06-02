@@ -21,6 +21,7 @@
   h1{font-family:'Fraunces',serif;font-weight:900;font-size:28px;margin:0;letter-spacing:-.02em}
   h2{font-family:'Fraunces',serif;font-weight:600;font-size:21px;margin:0 0 12px}
   .sub{color:var(--inkSoft);font-style:italic;margin:2px 0 0;font-size:14px}
+  .profile-pic{width:54px;height:54px;border-radius:50%;object-fit:cover;border:2px solid var(--ink);flex-shrink:0}
   header{border-bottom:2px solid var(--ink);background:var(--paper);padding:16px 0 14px;margin-bottom:22px;
     display:flex;justify-content:space-between;align-items:flex-end;flex-wrap:wrap;gap:10px}
   label{display:block;font-size:14px;color:var(--inkSoft);margin:0 0 5px}
@@ -69,6 +70,10 @@
   .uploadbox{display:flex;flex-direction:column;align-items:center;justify-content:center;width:100%;padding:28px 16px;
     background:#fff;border:2px dashed var(--line);border-radius:5px;cursor:pointer;text-align:center;transition:border-color .15s,background .15s}
   .uploadbox.drag{border-color:var(--ink);background:var(--greenSoft)}
+  .imgmenu{display:flex;flex-wrap:wrap;gap:8px;justify-content:center;margin-top:12px}
+  .imgbtn{font-family:'Newsreader',serif;font-size:14px;padding:9px 14px;background:#fff;
+    border:1px solid var(--line);border-radius:5px;cursor:pointer;color:var(--ink)}
+  .imgbtn:hover{border-color:var(--ink);background:var(--paperDeep)}
   .preview{width:100%;border-radius:4px;display:block;border:1px solid var(--line)}
   .muted{color:var(--inkSoft);font-size:14px}
   .count{font-family:'Fraunces',serif;font-weight:600;color:var(--inkSoft)}
@@ -81,10 +86,6 @@
   .scoreline .pts{font-family:'Fraunces',serif;font-weight:900;font-size:40px}
   .spin{display:inline-block;width:16px;height:16px;border:2px solid var(--paper);border-top-color:transparent;border-radius:50%;animation:sp .7s linear infinite;vertical-align:-2px;margin-right:8px}
   @keyframes sp{to{transform:rotate(360deg)}}
-  .mathbar{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:8px}
-  .mathbar button{font-family:'Newsreader',serif;font-size:15px;padding:6px 10px;background:#fff;border:1px solid var(--line);border-radius:4px;cursor:pointer;min-width:38px}
-  .mathbar button:hover{border-color:var(--ink)}
-  .mpreview{background:#fff;border:1px solid var(--line);border-radius:4px;padding:12px;min-height:44px;margin-top:8px;overflow-x:auto}
   .mpreview .muted{font-size:13px}
   .cropwrap{max-height:60vh;background:#000;border-radius:4px;overflow:hidden}
   .cropwrap img{max-width:100%;display:block}
@@ -103,7 +104,10 @@
 <body>
 <div class="wrap">
   <header>
-    <div><h1>덕형 수학 배틀존</h1><p class="sub">미분으로 그래프를 그려 겨루는 곳</p></div>
+    <div style="display:flex;align-items:center;gap:12px">
+      <img src="profile.png" alt="" class="profile-pic" onerror="this.style.display='none'" />
+      <div><h1>덕형 수학 배틀존</h1><p class="sub">미분으로 그래프를 그려 겨루는 곳</p></div>
+    </div>
     <button class="btn ghost" onclick="goHome()" style="font-size:14px;padding:8px 14px">처음으로</button>
   </header>
   <div id="app"></div>
@@ -152,23 +156,56 @@ function makeImageInput(opts){
     opts.onDone(out);
     showPreview(out);
   }
+  // 촬영(capture 켬) / 앨범(capture 끔) 구분해서 파일창 열기
+  function openFile(useCamera){
+    if(useCamera) fileInput.setAttribute("capture","environment");
+    else fileInput.removeAttribute("capture");
+    fileInput.click();
+  }
+  // 클립보드에서 이미지 붙여넣기
+  async function pasteFromClipboard(){
+    try{
+      if(!navigator.clipboard||!navigator.clipboard.read){
+        alert("이 기기에서는 붙여넣기 버튼이 지원되지 않아요. 대신 Ctrl+V를 눌러보세요.");return;
+      }
+      const items=await navigator.clipboard.read();
+      for(const it of items){
+        const type=it.types.find(t=>t.startsWith("image/"));
+        if(type){const blob=await it.getType(type);handle(blob);return;}
+      }
+      alert("클립보드에 이미지가 없어요. 먼저 화면을 캡처한 뒤 눌러주세요.");
+    }catch(e){
+      alert("클립보드를 읽지 못했어요. 권한을 허용했는지 확인하거나, Ctrl+V를 눌러보세요.");
+    }
+  }
+  function menuHtml(){
+    return '<div class="imgmenu">'+
+      '<button class="imgbtn cam">📷 사진 촬영</button>'+
+      '<button class="imgbtn alb">🖼️ 앨범에서 선택</button>'+
+      '<button class="imgbtn pst">📋 클립보드에서 붙여넣기</button>'+
+      '</div>';
+  }
+  function wireMenu(el){
+    el.querySelector(".cam").onclick=(e)=>{e.stopPropagation();openFile(true);};
+    el.querySelector(".alb").onclick=(e)=>{e.stopPropagation();openFile(false);};
+    el.querySelector(".pst").onclick=(e)=>{e.stopPropagation();pasteFromClipboard();};
+  }
   function showEmpty(){
     box.innerHTML='<div class="uploadbox"><div style="font-size:26px">'+(opts.icon||"📋")+'</div>'+
       '<div style="font-family:\'Fraunces\';font-weight:600;margin-top:6px">'+opts.title+'</div>'+
-      '<div class="muted" style="margin-top:2px">여기에 <b>Ctrl+V</b>로 붙여넣거나, 이미지를 <b>끌어다 놓으세요</b></div>'+
-      '<button class="toggle filepick" style="margin-top:10px">또는 파일 선택 / 촬영</button>'+
-      (opts.hint?'<div class="muted" style="margin-top:6px;font-size:13px">'+opts.hint+'</div>':'')+'</div>';
+      '<div class="muted" style="margin-top:2px">아래에서 고르거나, 이미지를 끌어다 놓거나, Ctrl+V로 붙여넣기</div>'+
+      menuHtml()+
+      (opts.hint?'<div class="muted" style="margin-top:8px;font-size:13px">'+opts.hint+'</div>':'')+'</div>';
     const ub=box.querySelector(".uploadbox");
-    ub.querySelector(".filepick").onclick=(e)=>{e.stopPropagation();fileInput.click();};
-    bindDropPaste(ub);
+    wireMenu(ub);
+    bindDrop(ub);
   }
   function showPreview(dataUrl){
-    box.innerHTML='<img class="preview" src="'+dataUrl+'"><button class="toggle" style="margin-top:8px">다시 선택 / 붙여넣기</button>';
-    box.querySelector("button").onclick=()=>fileInput.click();
-    bindDropPaste(box);
+    box.innerHTML='<img class="preview" src="'+dataUrl+'">'+menuHtml();
+    wireMenu(box);
+    bindDrop(box);
   }
-  function bindDropPaste(el){
-    // 영역 클릭만으로는 파일창을 열지 않음 (붙여넣기/끌어오기 여유를 줌)
+  function bindDrop(el){
     el.addEventListener("dragover",(e)=>{e.preventDefault();el.classList.add("drag");});
     el.addEventListener("dragleave",()=>el.classList.remove("drag"));
     el.addEventListener("drop",(e)=>{e.preventDefault();el.classList.remove("drag");
@@ -201,24 +238,6 @@ function setPasteTargets(targets){
   window.__activePaste=h;document.addEventListener("paste",h);
 }
 
-// ── 수식 편집기 ──
-const MATH_BTNS=[
-  ["x²","^{2}"],["xⁿ","^{}"],["√","\\sqrt{}"],["a/b","\\frac{}{}"],
-  ["∫","\\int_{}^{} \\,dx"],["∑","\\sum_{}^{}"],["lim","\\lim_{x \\to }"],["∞","\\infty"],
-  ["ln","\\ln "],["log","\\log "],["eˣ","e^{}"],["sin","\\sin "],["cos","\\cos "],["tan","\\tan "],
-  ["π","\\pi "],["θ","\\theta "],["·","\\cdot "],["( )","()"],
-];
-function renderMath(tex,el){
-  if(!tex.trim()){el.innerHTML='<span class="muted">여기에 수식 미리보기가 표시됩니다.</span>';return;}
-  try{katex.render(tex,el,{throwOnError:false,displayMode:true});}
-  catch(e){el.innerHTML='<span class="muted">입력 확인 중…</span>';}
-}
-function insertAtCursor(input,text){
-  const s=input.selectionStart,e=input.selectionEnd,v=input.value;
-  input.value=v.slice(0,s)+text+v.slice(e);
-  const caret=text.indexOf("{}")>=0?s+text.indexOf("{}")+1:s+text.length;
-  input.focus();input.setSelectionRange(caret,caret);
-}
 // 텍스트 안의 $...$ / $$...$$ 를 KaTeX로 렌더링해 안전한 HTML 문자열로 반환.
 // 수식 밖 일반 텍스트는 escape 처리하고 줄바꿈은 <br>로.
 function mathText(s){
@@ -333,23 +352,16 @@ function teacherCreate(){
     '<div id="pbox"></div></div>'+
   '<div class="field"><label>문제 글 (선택 — 사진 대신/함께 쓸 수 있어요)</label>'+
     '<textarea id="ptext" rows="2" placeholder="예) y = x ln x 의 그래프 개형을 미분을 이용하여 그리시오."></textarea></div>'+
-  '<div class="field"><label>모범답안 — 정답 함수를 수식으로 넣거나, 모범답안 이미지를 올리세요(끌어오기·붙여넣기 가능). <b>비워두면 AI가 스스로 모범답안을 만들어 채점합니다.</b></label>'+
-    '<div class="mathbar" id="mathbar"></div>'+
-    '<input id="atext" placeholder="예) y = x \\ln x  (정의역 x>0)" oninput="updMath()" />'+
-    '<div class="mpreview" id="mprev"></div>'+
+  '<div class="field"><label>모범답안 — 모범답안 이미지를 올리거나, 정답 함수를 글로 적으세요. <b>비워두면 AI가 스스로 모범답안을 만들어 채점합니다.</b></label>'+
+    '<input id="atext" placeholder="예) y = x ln x (정의역 x>0) — 그래프 문제면 정답 함수를 적어주세요" />'+
     '<input id="afile" type="file" accept="image/*" style="display:none" />'+
     '<div id="abox" style="margin-top:10px"></div></div>'+
   '<button class="btn block" id="startBtn" onclick="createSession()">수업 시작</button>'+
   '<p class="muted" id="cmsg" style="margin-top:10px"></p><div id="cerr"></div></div>';
-  const bar=$("#mathbar");
-  MATH_BTNS.forEach(([label,tex])=>{const b=document.createElement("button");b.type="button";b.textContent=label;
-    b.onclick=()=>{insertAtCursor($("#atext"),tex);updMath();};bar.appendChild(b);});
-  updMath();
   const pIn=makeImageInput({boxId:"pbox",fileId:"pfile",title:"문제 이미지 넣기",hint:"교재·학습지 사진, 화면 캡처 모두 가능",icon:"📋",onDone:(d)=>{teacherProblemImg=d;}});
   const aIn=makeImageInput({boxId:"abox",fileId:"afile",title:"모범답안 이미지 넣기 (선택)",hint:"모범답안을 올리면 그 기준으로 채점합니다",icon:"✏️",onDone:(d)=>{teacherAnswerImg=d;}});
   setPasteTargets([pIn,aIn]);
 }
-function updMath(){renderMath($("#atext").value,$("#mprev"));}
 async function createSession(){
   const problemText=$("#ptext").value.trim();
   const answerText=$("#atext").value.trim();
@@ -479,7 +491,7 @@ function studentSolve(){
   '<div style="flex:1"><label>학번</label><input id="sid" inputmode="numeric" placeholder="10130" /></div>'+
   '<div style="flex:1.4"><label>이름</label><input id="sname" placeholder="홍길동" /></div></div>'+
   '<label>답안 — 사진 촬영·올리기, 태블릿 화면 끌어오기, Ctrl+V 붙여넣기 모두 됩니다. 올린 뒤 필요한 부분만 잘라낼 수 있어요.</label>'+
-  '<input id="file" type="file" accept="image/*" capture="environment" style="display:none" />'+
+  '<input id="file" type="file" accept="image/*" style="display:none" />'+
   '<div id="sbox"></div>'+
   '<button class="btn block" id="subBtn" style="margin-top:16px" onclick="submitSolve()">채점받기</button><div id="serr"></div></div>';
   const sIn=makeImageInput({boxId:"sbox",fileId:"file",title:"답안 이미지 넣기",hint:"그래프 문제면 축과 눈금이 보이게",icon:"📋",onDone:(d)=>{studentImg=d;}});
