@@ -124,7 +124,55 @@ const params=new URLSearchParams(location.search);
 function esc(s){return (s==null?"":String(s)).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));}
 function badge(v){const m={correct:["b-correct","정답"],incorrect:["b-incorrect","오답"],partial:["b-partial","부분"],unclear:["b-unclear","판독"]}[v]||["b-unclear","판독"];return '<span class="badge '+m[0]+'">'+m[1]+'</span>';}
 function stopPoll(){if(st.poll){clearInterval(st.poll);st.poll=null;}}
-function goHome(){stopPoll();history.replaceState({},"",location.pathname);landing();}
+function goHome(){stopPoll();closeModals();go("landing",null,{url:location.pathname});landing();}
+
+// ── 화면 이동 기록: 브라우저 "뒤로"가 사이트를 벗어나지 않고 직전 화면으로 가도록 ──
+let restoring=false, curKey="";
+function keyOf(s){return s.scr+"|"+JSON.stringify(s.arg==null?null:s.arg);}
+// 화면마다 한 번 호출. 첫 화면이거나 replace면 기록을 덮어쓰고, 아니면 새로 쌓음
+function go(scr,arg,opt){
+  if(restoring)return;
+  opt=opt||{};
+  const s={scr,arg:arg==null?null:arg};
+  const key=keyOf(s);
+  if(key===curKey&&!opt.url)return;
+  const url=opt.url||location.href;
+  if(opt.replace||!history.state||!history.state.scr)history.replaceState(s,"",url);
+  else history.pushState(s,"",url);
+  curKey=key;
+}
+function closeModals(){document.querySelectorAll(".modal").forEach(m=>m.remove());}
+// 모달은 기록 한 칸을 차지 → 닫을 때 뒤로 한 칸
+function closeModal(){if(history.state&&history.state.modal)history.back();else closeModals();}
+async function fetchProblem(code){
+  const r=await fetch("/api/sessions/"+code);const d=await r.json();if(!r.ok)throw new Error(d.error||"오류");
+  st.code=code;st.problem=d.problemText;st.problemImage=d.problemImage;
+}
+const SCREENS={
+  landing:()=>landing(),
+  hlogin:()=>historyLogin(),
+  hlist:()=>historyPw?historyOpen():historyLogin(),
+  hdetail:(code)=>historyPw?historyDetail(code):historyLogin(),
+  create:()=>teacherCreate(),
+  dash:async(code)=>{await fetchProblem(code);revealStage=0;lastBoard=[];teacherDash();},
+  join:(code)=>studentJoin(code),
+  solve:async(code)=>{await fetchProblem(code);studentSolve();},
+  result:(a)=>{st.code=a.code;st.student=a.student;studentResult(a.d);},
+};
+async function restore(s){
+  stopPoll();
+  if(window.__activePaste){document.removeEventListener("paste",window.__activePaste);window.__activePaste=null;}
+  restoring=true;
+  try{await (SCREENS[s.scr]||landing)(s.arg);}
+  catch(e){landing();}
+  finally{restoring=false;curKey=keyOf(s);}
+}
+window.addEventListener("popstate",(e)=>{
+  closeModals();
+  const s=e.state;
+  if(!s||!s.scr||keyOf(s)===curKey)return; // 모달만 닫힌 경우 등
+  restore(s);
+});
 
 // ── 이미지 크롭 (Cropper.js) ──
 function cropImage(file){
@@ -275,6 +323,7 @@ function escNl(t){return t.replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&g
 
 // ── 랜딩 ──
 function landing(){
+  go("landing");
   if(window.__activePaste){document.removeEventListener("paste",window.__activePaste);window.__activePaste=null;}
   app().innerHTML='<div class="card"><h2>어떻게 시작할까요?</h2><div class="big-btns">'+
     '<div class="pick" onclick="teacherCreate()"><div class="t">선생님</div><div class="d">문제 내고 실시간 순위 보기</div></div>'+
@@ -286,7 +335,9 @@ function landing(){
 
 // ── 지난 기록 보기 (선생님 전용) ──
 let historyPw="";
+try{historyPw=sessionStorage.getItem("mathbattle_hpw")||"";}catch(e){}
 function historyLogin(){
+  go("hlogin");
   if(window.__activePaste){document.removeEventListener("paste",window.__activePaste);window.__activePaste=null;}
   app().innerHTML='<div class="card"><h2>지난 기록 보기</h2>'+
     '<p class="muted" style="margin-top:-6px">선생님 전용입니다. 비밀번호를 입력하세요.</p>'+
@@ -302,6 +353,8 @@ async function historyOpen(){
     const d=await r.json();
     if(!r.ok)throw new Error(d.error||"오류");
     historyPw=pw;
+    try{sessionStorage.setItem("mathbattle_hpw",pw);}catch(e){}
+    go("hlist");
     renderHistoryList(d.sessions||[]);
   }catch(e){if($("#herr"))$("#herr").innerHTML='<p class="err">'+esc(e.message)+'</p>';else alert(e.message);}
 }
@@ -327,6 +380,7 @@ async function historyDetail(code){
     const r=await fetch("/api/history/sessions/"+code,{headers:{"x-history-password":historyPw}});
     const d=await r.json();
     if(!r.ok)throw new Error(d.error||"오류");
+    go("hdetail",code);
     const sess=d.session||{};
     const subs=d.submissions||[];
     const probImg=sess.problem_image?'<img class="preview" src="'+sess.problem_image+'" style="margin-bottom:8px">':'';
@@ -394,6 +448,7 @@ function downloadHistoryCsv(code){
 // ── 선생님: 출제 ──
 let teacherProblemImg=null, teacherAnswerImg=null;
 function teacherCreate(){
+  go("create");
   teacherProblemImg=null;teacherAnswerImg=null;
   app().innerHTML=
   '<div class="card"><h2>문제 만들기</h2>'+
@@ -425,7 +480,7 @@ async function createSession(){
     const r=await fetch("/api/sessions",{method:"POST",headers:{"content-type":"application/json"},
       body:JSON.stringify({problemText,problemImage:teacherProblemImg,answerText,answerImage:teacherAnswerImg,memo})});
     const d=await r.json();if(!r.ok)throw new Error(d.error||"오류");
-    st.code=d.code;st.problem=problemText;st.problemImage=teacherProblemImg;teacherDash();
+    st.code=d.code;st.problem=problemText;st.problemImage=teacherProblemImg;teacherDash(true);
   }catch(e){$("#cerr").innerHTML='<p class="err">'+esc(e.message)+'</p>';b.disabled=false;$("#cmsg").textContent="";}
 }
 
@@ -440,7 +495,8 @@ function saveLocal(){
     localStorage.setItem(lsKey("meta"),JSON.stringify({problem:st.problem,problemImage:st.problemImage}));
   }catch(e){}
 }
-function teacherDash(){
+function teacherDash(replace){
+  go("dash",st.code,{replace:!!replace});
   if(window.__activePaste){document.removeEventListener("paste",window.__activePaste);window.__activePaste=null;}
   const link=location.origin+"/?s="+st.code;
   // 새로고침 복구
@@ -505,15 +561,16 @@ function renderBoard(){
 async function openDetail(sid){
   try{const r=await fetch("/api/sessions/"+st.code+"/submission/"+encodeURIComponent(sid));const x=await r.json();if(!r.ok)throw new Error(x.error||"오류");
     const feats=(x.features||[]).map(f=>'<div class="feat"><span class="mk '+(f.ok?'ok':'no')+'">'+(f.ok?'○':'✕')+'</span><div><div class="fn">'+mathText(f.name)+(f.expected?' <span>— '+mathText(f.expected)+'</span>':'')+'</div>'+(f.comment?'<div class="cm">'+mathText(f.comment)+'</div>':'')+'</div></div>').join("");
-    const m=document.createElement("div");m.className="modal";m.onclick=(e)=>{if(e.target===m)m.remove();};
+    const m=document.createElement("div");m.className="modal";m.onclick=(e)=>{if(e.target===m)closeModal();};
     m.innerHTML='<div class="inner"><div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">'+
       '<h2 style="margin:0">'+esc(x.name)+' <small style="color:var(--inkSoft);font-size:15px">'+esc(x.studentId)+'</small></h2>'+
-      '<button class="toggle" onclick="this.closest(\'.modal\').remove()">닫기</button></div>'+
+      '<button class="toggle" onclick="closeModal()">닫기</button></div>'+
       '<div style="display:flex;align-items:baseline;gap:10px;margin-bottom:12px">'+badge(x.verdict)+'<span class="sc" style="font-family:\'Fraunces\';font-weight:900;font-size:26px">'+x.score+'점</span><span class="muted">'+x.okCount+'/'+x.total+' 항목</span></div>'+
       (x.summary?'<p style="margin:0 0 12px">'+mathText(x.summary)+'</p>':'')+
       '<img class="preview" src="'+esc(x.image)+'" style="margin-bottom:12px">'+feats+
       answerGraphHTML(x.answerGraph)+'</div>';
     document.body.appendChild(m);drawAnswerGraph(x.answerGraph);
+    history.pushState(Object.assign({},history.state,{modal:1}),"",location.href);
   }catch(e){alert(e.message);}
 }
 function copyLink(l){navigator.clipboard&&navigator.clipboard.writeText(l);}
@@ -521,6 +578,7 @@ function copyLink(l){navigator.clipboard&&navigator.clipboard.writeText(l);}
 // ── 학생 ──
 function studentJoin(code){
   const pre=code||params.get("s")||"";
+  go("join",pre?pre.toUpperCase():null);
   app().innerHTML='<div class="card"><h2>수업 참여</h2><div class="field"><label>참여 코드</label>'+
     '<input id="jcode" value="'+esc(pre.toUpperCase())+'" maxlength="4" style="text-transform:uppercase;letter-spacing:.2em;font-family:\'Fraunces\';font-weight:700" placeholder="ABCD" /></div>'+
     '<button class="btn block" onclick="enterSession()">입장</button><div id="jerr"></div></div>';
@@ -535,6 +593,7 @@ async function enterSession(){
 }
 let studentImg=null;
 function studentSolve(){
+  go("solve",st.code,{replace:!!(history.state&&history.state.scr==="join")});
   studentImg=null;
   app().innerHTML=
   '<div class="card"><h2>문제</h2>'+
@@ -562,6 +621,7 @@ async function submitSolve(){
   }catch(e){$("#serr").innerHTML='<p class="err">'+esc(e.message)+'</p>';b.disabled=false;b.textContent="채점받기";}
 }
 function studentResult(d){
+  go("result",{code:st.code,student:st.student,d:d});
   const feats=(d.features||[]).map(f=>'<div class="feat"><span class="mk '+(f.ok?'ok':'no')+'">'+(f.ok?'○':'✕')+'</span><div><div class="fn">'+mathText(f.name)+(f.expected?' <span>— '+mathText(f.expected)+'</span>':'')+'</div>'+(f.comment?'<div class="cm">'+mathText(f.comment)+'</div>':'')+'</div></div>').join("");
   app().innerHTML='<div class="card"><h2 style="margin-bottom:6px">'+esc(st.student.name)+' 학생의 채점 결과</h2>'+
     '<div class="scoreline">'+badge(d.verdict)+'<span class="pts">'+d.score+'점</span><span class="muted">'+d.okCount+'/'+d.total+' 항목 정답</span></div>'+
@@ -608,7 +668,8 @@ function drawAnswerGraph(g){
     if(k.label){ctx.fillStyle="#2a2520";ctx.font="13px serif";ctx.fillText(k.label,X(k.x)+7,Y(k.y)-7);}});
 }
 
-if(params.get("s"))studentJoin();else landing();
+if(history.state&&history.state.scr)restore(history.state);
+else if(params.get("s"))studentJoin();else landing();
 </script>
 </body>
 </html>
