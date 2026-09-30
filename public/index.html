@@ -294,7 +294,8 @@ function historyLogin(){
     '<button class="btn block" onclick="historyOpen()">열기</button><div id="herr"></div></div>';
 }
 async function historyOpen(){
-  const pw=$("#hpw").value;
+  const inp=$("#hpw");
+  const pw=inp?inp.value:historyPw; // 상세 화면의 "목록" 버튼에서는 이미 입력한 비밀번호 사용
   if(!pw){$("#herr").innerHTML='<p class="err">비밀번호를 입력하세요.</p>';return;}
   try{
     const r=await fetch("/api/history/sessions",{headers:{"x-history-password":pw}});
@@ -302,7 +303,7 @@ async function historyOpen(){
     if(!r.ok)throw new Error(d.error||"오류");
     historyPw=pw;
     renderHistoryList(d.sessions||[]);
-  }catch(e){$("#herr").innerHTML='<p class="err">'+esc(e.message)+'</p>';}
+  }catch(e){if($("#herr"))$("#herr").innerHTML='<p class="err">'+esc(e.message)+'</p>';else alert(e.message);}
 }
 function renderHistoryList(list){
   const rows=list.length?list.map(s=>{
@@ -343,7 +344,34 @@ async function historyDetail(code){
     app().innerHTML='<div class="card"><div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">'+
       '<h2 style="margin:0">수업 '+esc(code)+'</h2><div><button class="toggle" onclick="downloadHistoryCsv(\''+esc(code)+'\')">CSV</button> '+
       '<button class="toggle" onclick="historyOpen()">목록</button></div></div>'+
-      probImg+probTxt+'</div>'+rows;
+      probImg+probTxt+
+      '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:6px">'+
+        '<button class="btn" style="flex:1" onclick="reopenSession(\''+esc(code)+'\')">▶ 이 수업 다시 열기</button>'+
+        '<button class="btn" style="flex:1;background:#fff;color:var(--ink);border:1px solid var(--ink)" onclick="cloneSession(\''+esc(code)+'\')">＋ 같은 문제로 새 수업 (다른 반)</button></div>'+
+      '<p class="muted" style="margin:8px 0 0;font-size:13px">다시 열기: 같은 코드·QR로 이어서 제출받고 순위도 합쳐져요. 새 수업: 새 코드가 생겨 반별로 순위를 따로 볼 수 있어요.</p>'+
+      '</div>'+rows;
+    window.__histSess=sess;
+  }catch(e){alert(e.message);}
+}
+function openDash(code,problem,problemImage){
+  stopPoll();
+  revealStage=0;lastBoard=[];
+  st.code=code;st.problem=problem||"";st.problemImage=problemImage||null;
+  teacherDash();
+}
+function reopenSession(code){
+  const s=window.__histSess||{};
+  openDash(code,s.problem_text,s.problem_image);
+}
+async function cloneSession(code){
+  const s=window.__histSess||{};
+  const memo=prompt("새 수업 메모 (예: 3단원 극값 · 3반)",s.memo||"");
+  if(memo===null)return;
+  try{
+    const r=await fetch("/api/history/sessions/"+code+"/clone",{method:"POST",
+      headers:{"content-type":"application/json","x-history-password":historyPw},body:JSON.stringify({memo})});
+    const d=await r.json();if(!r.ok)throw new Error(d.error||"오류");
+    openDash(d.code,d.problemText,d.problemImage);
   }catch(e){alert(e.message);}
 }
 async function editMemo(code){

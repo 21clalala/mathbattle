@@ -41,12 +41,52 @@ async function sbSaveSession(s) {
       headers: { "Prefer": "resolution=merge-duplicates" },
       body: JSON.stringify(r),
     });
-    if (s.memo) {
-      // memo 열이 아직 없는 DB여도 수업 자체는 저장되도록 메모 없이 한 번 더 시도
-      try { await save(Object.assign({ memo: s.memo }, row)); }
-      catch (e) { console.error("[sb session memo]", e.message); await save(row); }
+    const extra = {};
+    if (s.memo) extra.memo = s.memo;
+    if (s.answerImage) extra.answer_image = s.answerImage;
+    if (Object.keys(extra).length) {
+      // memo·answer_image 열이 아직 없는 DB여도 수업 자체는 저장되도록 빼고 한 번 더 시도
+      try { await save(Object.assign({}, row, extra)); }
+      catch (e) { console.error("[sb session extra]", e.message); await save(row); }
     } else await save(row);
   } catch (e) { console.error("[sb session]", e.message); }
+}
+// 메모리에 없는 수업(서버 재시작 등)은 DB에서 제출 기록까지 불러와 되살림
+async function getSession(rawCode) {
+  const code = String(rawCode || "").toUpperCase();
+  if (sessions.has(code)) return sessions.get(code);
+  if (!SB_ON || !/^[A-Z0-9]{4}$/.test(code)) return null;
+  try {
+    const rows = await sbFetch("sessions?code=eq." + code + "&select=*");
+    const r = rows && rows[0];
+    if (!r) return null;
+    const subs = await sbFetch("submissions?code=eq." + code + "&select=*") || [];
+    const s = {
+      code,
+      problemText: r.problem_text || "",
+      problemImage: r.problem_image || null,
+      answerText: r.answer_text || "",
+      answerImage: r.answer_image || null,
+      memo: r.memo || "",
+      createdAt: r.created_at ? Date.parse(r.created_at) : Date.now(),
+      submissions: new Map(),
+      answerGraph: r.answer_graph || null,
+    };
+    for (const x of subs) {
+      s.submissions.set(x.student_id, {
+        studentId: x.student_id, name: x.name, verdict: x.verdict,
+        score: x.score, okCount: x.ok_count, total: x.total,
+        summary: x.summary || "", features: x.features || [],
+        strength: x.strength || "", correctSolution: x.correct_solution || "",
+        image: x.image, submittedAt: x.submitted_at ? Date.parse(x.submitted_at) : Date.now(),
+      });
+    }
+    if (!sessions.has(code)) sessions.set(code, s);
+    return sessions.get(code);
+  } catch (e) {
+    console.error("[sb load session]", e.message);
+    return null;
+  }
 }
 // 제출 저장(같은 code+student_id면 갱신)
 async function sbSaveSubmission(code, x) {
@@ -218,7 +258,7 @@ app.post("/api/sessions", async (req, res) => {
   if (!problemText && !problemImage)
     return res.status(400).json({ error: "문제를 사진으로 올리거나 글로 입력해 주세요." });
   let code;
-  do { code = makeCode(); } while (sessions.has(code));
+  do { code = makeCode(); } while (await getSession(code));
   const s = {
     code,
     problemText: (problemText || "").trim().slice(0, 1500),
@@ -236,14 +276,14 @@ app.post("/api/sessions", async (req, res) => {
   res.json({ code });
 });
 
-app.get("/api/sessions/:code", (req, res) => {
-  const s = sessions.get((req.params.code || "").toUpperCase());
+app.get("/api/sessions/:code", async (req, res) => {
+  const s = await getSession(req.params.code);
   if (!s) return res.status(404).json({ error: "세션을 찾을 수 없어요. 코드를 확인해 주세요." });
   res.json({ problemText: s.problemText, problemImage: s.problemImage });
 });
 
 app.post("/api/sessions/:code/submit", async (req, res) => {
-  const s = sessions.get((req.params.code || "").toUpperCase());
+  const s = await getSession(req.params.code);
   if (!s) return res.status(404).json({ error: "세션을 찾을 수 없어요." });
   if (!API_KEY) return res.status(500).json({ error: "서버에 API 키가 설정되지 않았어요." });
   const { studentId, name, image } = req.body || {};
@@ -278,8 +318,8 @@ app.post("/api/sessions/:code/submit", async (req, res) => {
   }
 });
 
-app.get("/api/sessions/:code/leaderboard", (req, res) => {
-  const s = sessions.get((req.params.code || "").toUpperCase());
+app.get("/api/sessions/:code/leaderboard", async (req, res) => {
+  const s = await getSession(req.params.code);
   if (!s) return res.status(404).json({ error: "세션 없음" });
   const list = [...s.submissions.values()].map((x) => ({
     studentId: x.studentId, name: x.name, verdict: x.verdict,
@@ -290,8 +330,8 @@ app.get("/api/sessions/:code/leaderboard", (req, res) => {
   res.json({ problemText: s.problemText, problemImage: s.problemImage, count: list.length, leaderboard: list });
 });
 
-app.get("/api/sessions/:code/submission/:studentId", (req, res) => {
-  const s = sessions.get((req.params.code || "").toUpperCase());
+app.get("/api/sessions/:code/submission/:studentId", async (req, res) => {
+  const s = await getSession(req.params.code);
   if (!s) return res.status(404).json({ error: "세션 없음" });
   const x = s.submissions.get(req.params.studentId);
   if (!x) return res.status(404).json({ error: "제출 없음" });
@@ -303,8 +343,8 @@ function csvCell(v) {
   const str = v == null ? "" : String(v);
   return '"' + str.replace(/"/g, '""') + '"';
 }
-app.get("/api/sessions/:code/csv", (req, res) => {
-  const s = sessions.get((req.params.code || "").toUpperCase());
+app.get("/api/sessions/:code/csv", async (req, res) => {
+  const s = await getSession(req.params.code);
   if (!s) return res.status(404).send("세션 없음");
   const list = [...s.submissions.values()];
   list.sort((a, b) => b.score - a.score || a.submittedAt - b.submittedAt);
@@ -376,6 +416,26 @@ app.patch("/api/history/sessions/:code/memo", async (req, res) => {
     console.error("[sb memo]", e.message);
     res.status(500).json({ error: "메모를 저장하지 못했어요. Supabase sessions 표에 memo 열이 있는지 확인해 주세요." });
   }
+});
+// 같은 문제로 새 수업 만들기 (반마다 순위를 따로 보고 싶을 때)
+app.post("/api/history/sessions/:code/clone", async (req, res) => {
+  if (!checkPassword(req, res)) return;
+  const src = await getSession(req.params.code);
+  if (!src) return res.status(404).json({ error: "원래 수업을 찾을 수 없어요." });
+  let code;
+  do { code = makeCode(); } while (await getSession(code));
+  const s = {
+    code,
+    problemText: src.problemText, problemImage: src.problemImage,
+    answerText: src.answerText, answerImage: src.answerImage,
+    memo: String((req.body && req.body.memo) || src.memo || "").trim().slice(0, 100),
+    createdAt: Date.now(),
+    submissions: new Map(),
+    answerGraph: src.answerGraph,
+  };
+  sessions.set(code, s);
+  await sbSaveSession(s);
+  res.json({ code, problemText: s.problemText, problemImage: s.problemImage });
 });
 // 특정 수업의 제출 목록(채점 결과+사진)
 app.get("/api/history/sessions/:code", async (req, res) => {
