@@ -164,7 +164,8 @@ async function callClaudeOnce(content, maxTokens, schema) {
   });
   if (!r.ok) throw new Error("Anthropic " + r.status + " " + (await r.text()).slice(0, 300));
   const data = await r.json();
-  if (data.stop_reason === "max_tokens") throw new Error("response cut off (max_tokens)");
+  if (data.stop_reason === "max_tokens")
+    throw new Error("response cut off (max_tokens) model=" + data.model + " output_tokens=" + (data.usage && data.usage.output_tokens));
   if (data.stop_reason === "refusal") throw new Error("model refused");
   const txt = (data.content || []).filter((b) => b.type === "text").map((b) => b.text).join("\n");
   try { return JSON.parse(txt); } catch (_) { return extractJson(txt); }
@@ -197,7 +198,7 @@ async function buildAnswerGraph(s) {
   text += "\n그래프 개형을 그리는 문제이고 y=f(x) 형태로 그릴 수 있으면, 정답 함수를 정하고 점들을 촘촘히(40~120개) 계산하세요. 정의역 안에서 의미 있는 x범위를 잡고, 극값/절편/변곡점 등 핵심점도 표시하세요.\n그래프를 그리는 문제가 아니거나(일반 계산·증명·서술형 등), 정적분 값·수열의 합처럼 곡선이 아니면 drawable을 false로 하세요. 억지로 그래프를 만들지 마세요.\n\n반드시 아래 JSON만 출력(마크다운 금지):\n{\n \"drawable\": true,\n \"funcLabel\": \"y = x ln x\",\n \"domainNote\": \"x > 0\",\n \"points\": [{\"x\": 0.1, \"y\": -0.23}],\n \"keyPoints\": [{\"x\": 0.37, \"y\": -0.37, \"label\": \"극소\"}],\n \"note\": \"한 줄 설명(한국어)\"\n}\n그릴 수 없으면: {\"drawable\": false, \"note\": \"이유(한국어)\"}";
   content.push({ type: "text", text });
   try {
-    const g = await callClaude(content, 8000, GRAPH_SCHEMA);
+    const g = await callClaude(content, 16000, GRAPH_SCHEMA);
     if (g && g.drawable && Array.isArray(g.points) && g.points.length > 1) return g;
     return { drawable: false, note: (g && g.note) || "그래프를 그릴 수 없는 형태입니다." };
   } catch (e) {
@@ -382,9 +383,13 @@ async function grade(s, studentImage) {
     "- 학생 글씨나 식이 흐려서 읽기 어려우면 좋게 추측하지 말고, 해당 항목을 ok=false 또는 verdict를 \"unclear\"로 두고 무엇이 안 보이는지 적으세요.\n" +
     "- 채점은 학생을 격려하되 정확해야 합니다. 틀린 것을 맞다고 하면 안 됩니다.\n\n" +
     "수식 표기 규칙(중요): summary, features의 expected와 comment, correctSolution 안에서 수식·수학 기호는 반드시 LaTeX로 쓰고 달러기호로 감싸세요. 인라인은 $...$, 따로 떼는 식은 $$...$$. 예: $f'(x)=\\ln x+1$, $x=\\frac{1}{e}$, $\\int_0^1 x^2\\,dx=\\frac{1}{3}$, $\\lim_{x\\to0^+}$. 분수는 x/y 대신 $\\frac{x}{y}$, 거듭제곱은 x^2 대신 $x^2$로 쓰세요. 일반 한국어 설명은 달러기호 밖에 그대로 두세요.\n\n" +
-    "반드시 아래 JSON만 출력(마크다운·백틱 금지). work에는 채점 전에 정답을 확정하기 위한 당신의 풀이 메모를 간단히 적으세요(학생에게는 보이지 않음):\n{\n \"work\": \"정답 확인용 풀이 메모\",\n \"type\": \"graph\" | \"calc\",\n \"verdict\": \"correct\" | \"incorrect\" | \"partial\" | \"unclear\",\n \"summary\": \"한두 문장 채점 요약(한국어)\",\n \"strength\": \"이 학생이 잘한 점 한 줄 요약(한국어)\",\n \"features\": [{\"name\":\"특징명 또는 단계명\",\"expected\":\"정답 기준\",\"ok\":true,\"comment\":\"한 줄 평(한국어)\"}],\n \"correctSolution\": \"올바른 풀이 또는 그래프 개형 설명(한국어)\"\n}";
+    "반드시 아래 JSON만 출력(마크다운·백틱 금지). work는 학생에게 보이지 않는 채점용 메모입니다. " +
+    (s.answerText || s.answerImage
+      ? "모범답안이 있으니 work에는 모범답안의 핵심 단계와 최종 답을 정리하고 학생 답안과 비교한 내용만 적으세요."
+      : "work에는 정답을 구하는 풀이를 생략 없이 필요한 만큼 적으세요. 단, 이미 쓴 식이나 검산을 되풀이하지 말고, 정답이 확정되면 바로 채점으로 넘어가세요.") +
+    "\n{\n \"work\": \"정답 확인용 풀이 메모\",\n \"type\": \"graph\" | \"calc\",\n \"verdict\": \"correct\" | \"incorrect\" | \"partial\" | \"unclear\",\n \"summary\": \"한두 문장 채점 요약(한국어)\",\n \"strength\": \"이 학생이 잘한 점 한 줄 요약(한국어)\",\n \"features\": [{\"name\":\"특징명 또는 단계명\",\"expected\":\"정답 기준\",\"ok\":true,\"comment\":\"한 줄 평(한국어)\"}],\n \"correctSolution\": \"올바른 풀이 또는 그래프 개형 설명(한국어)\"\n}";
   content.push({ type: "text", text });
-  return callClaude(content, 8000, GRADE_SCHEMA);
+  return callClaude(content, 16000, GRADE_SCHEMA);
 }
 
 const PORT = process.env.PORT || 3000;
