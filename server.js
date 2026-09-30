@@ -32,14 +32,20 @@ async function sbFetch(pathAndQuery, options) {
 async function sbSaveSession(s) {
   if (!SB_ON) return;
   try {
-    await sbFetch("sessions", {
+    const row = {
+      code: s.code, problem_text: s.problemText, problem_image: s.problemImage,
+      answer_text: s.answerText, answer_graph: s.answerGraph,
+    };
+    const save = (r) => sbFetch("sessions", {
       method: "POST",
       headers: { "Prefer": "resolution=merge-duplicates" },
-      body: JSON.stringify({
-        code: s.code, problem_text: s.problemText, problem_image: s.problemImage,
-        answer_text: s.answerText, answer_graph: s.answerGraph,
-      }),
+      body: JSON.stringify(r),
     });
+    if (s.memo) {
+      // memo 열이 아직 없는 DB여도 수업 자체는 저장되도록 메모 없이 한 번 더 시도
+      try { await save(Object.assign({ memo: s.memo }, row)); }
+      catch (e) { console.error("[sb session memo]", e.message); await save(row); }
+    } else await save(row);
   } catch (e) { console.error("[sb session]", e.message); }
 }
 // 제출 저장(같은 code+student_id면 갱신)
@@ -208,7 +214,7 @@ async function buildAnswerGraph(s) {
 }
 
 app.post("/api/sessions", async (req, res) => {
-  const { problemText, problemImage, answerText, answerImage } = req.body || {};
+  const { problemText, problemImage, answerText, answerImage, memo } = req.body || {};
   if (!problemText && !problemImage)
     return res.status(400).json({ error: "문제를 사진으로 올리거나 글로 입력해 주세요." });
   let code;
@@ -219,6 +225,7 @@ app.post("/api/sessions", async (req, res) => {
     problemImage: problemImage || null,
     answerText: (answerText || "").trim().slice(0, 1500),
     answerImage: answerImage || null,
+    memo: (memo || "").trim().slice(0, 100),
     createdAt: Date.now(),
     submissions: new Map(),
     answerGraph: null,
@@ -326,9 +333,49 @@ app.get("/api/history/sessions", async (req, res) => {
   if (!checkPassword(req, res)) return;
   if (!SB_ON) return res.status(503).json({ error: "데이터베이스가 연결되지 않았어요." });
   try {
-    const list = await sbFetch("sessions?select=code,problem_text,created_at&order=created_at.desc&limit=200");
+    let list;
+    try {
+      list = await sbFetch("sessions?select=code,problem_text,memo,created_at&order=created_at.desc&limit=200");
+    } catch (e) {
+      // memo 열이 아직 없으면 메모 없이 불러오기
+      console.error("[sb history memo]", e.message);
+      list = await sbFetch("sessions?select=code,problem_text,created_at&order=created_at.desc&limit=200");
+    }
     res.json({ sessions: list || [] });
   } catch (e) { res.status(500).json({ error: "기록을 불러오지 못했어요." }); }
+});
+// 지난 수업 문제 사진 (목록 썸네일용)
+app.get("/api/history/sessions/:code/image", async (req, res) => {
+  if (!checkPassword(req, res)) return;
+  if (!SB_ON) return res.status(503).end();
+  const code = (req.params.code || "").toUpperCase();
+  try {
+    const rows = await sbFetch("sessions?code=eq." + encodeURIComponent(code) + "&select=problem_image");
+    const img = rows && rows[0] && rows[0].problem_image;
+    const m = img && img.match(/^data:([^;]+);base64,(.*)$/);
+    if (!m) return res.status(404).end();
+    res.setHeader("Content-Type", m[1]);
+    res.setHeader("Cache-Control", "private, max-age=86400");
+    res.send(Buffer.from(m[2], "base64"));
+  } catch (e) { res.status(500).end(); }
+});
+// 지난 수업 메모 수정
+app.patch("/api/history/sessions/:code/memo", async (req, res) => {
+  if (!checkPassword(req, res)) return;
+  if (!SB_ON) return res.status(503).json({ error: "데이터베이스가 연결되지 않았어요." });
+  const code = (req.params.code || "").toUpperCase();
+  const memo = String((req.body && req.body.memo) || "").trim().slice(0, 100);
+  try {
+    await sbFetch("sessions?code=eq." + encodeURIComponent(code), {
+      method: "PATCH", body: JSON.stringify({ memo }),
+    });
+    const live = sessions.get(code);
+    if (live) live.memo = memo;
+    res.json({ memo });
+  } catch (e) {
+    console.error("[sb memo]", e.message);
+    res.status(500).json({ error: "메모를 저장하지 못했어요. Supabase sessions 표에 memo 열이 있는지 확인해 주세요." });
+  }
 });
 // 특정 수업의 제출 목록(채점 결과+사진)
 app.get("/api/history/sessions/:code", async (req, res) => {

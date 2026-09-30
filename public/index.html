@@ -54,6 +54,10 @@
   .row.top .rank{color:var(--gold)}
   .row .nm{flex:1;font-size:16px;font-weight:500}
   .row .nm small{color:var(--inkSoft);font-weight:400;margin-left:6px}
+  .row .memo{font-size:14px;font-weight:400;margin-top:4px;cursor:text;border-radius:3px;padding:1px 4px;margin-left:-4px;display:inline-block}
+  .row .memo:hover{background:var(--paperDeep)}
+  .row .memo .ph{color:var(--inkSoft);font-size:13px}
+  .row .hthumb{width:120px;height:64px;object-fit:cover;object-position:top;border:1px solid var(--line);border-radius:3px;flex-shrink:0;background:#fff}
   .row .sc{font-family:'Fraunces',serif;font-weight:700;font-size:18px}
   .badge{font-size:12px;font-weight:600;padding:3px 9px;border-radius:20px;font-family:'Fraunces',serif}
   .b-correct{background:var(--greenSoft);color:var(--green)}
@@ -302,10 +306,16 @@ async function historyOpen(){
 }
 function renderHistoryList(list){
   const rows=list.length?list.map(s=>{
+    const code=esc(s.code);
     const when=s.created_at?new Date(s.created_at).toLocaleString("ko-KR"):"";
     const title=(s.problem_text&&s.problem_text.trim())?esc(s.problem_text.slice(0,40)):"(사진 문제)";
-    return '<div class="row" onclick="historyDetail(\''+esc(s.code)+'\')"><div class="rank" style="width:auto;color:var(--red)">'+esc(s.code)+'</div>'+
-      '<div class="nm">'+title+'<small style="display:block;margin:2px 0 0">'+when+'</small></div></div>';
+    const memo=(s.memo||"").trim();
+    const thumb="/api/history/sessions/"+code+"/image?pw="+encodeURIComponent(historyPw);
+    return '<div class="row" onclick="historyDetail(\''+code+'\')"><div class="rank" style="width:auto;color:var(--red)">'+code+'</div>'+
+      '<div class="nm">'+title+'<small style="display:block;margin:2px 0 0">'+when+'</small>'+
+      '<div class="memo" id="memo-'+code+'" data-memo="'+esc(memo)+'" onclick="event.stopPropagation();editMemo(\''+code+'\')" title="눌러서 메모 수정">'+
+        (memo?'📝 '+esc(memo):'<span class="ph">+ 메모 추가</span>')+'</div></div>'+
+      '<img class="hthumb" loading="lazy" src="'+thumb+'" alt="" onerror="this.remove()"></div>';
   }).join(""):'<p class="muted">저장된 수업이 없어요.</p>';
   app().innerHTML='<div class="card"><div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">'+
     '<h2 style="margin:0">지난 수업</h2><button class="toggle" onclick="landing()">처음으로</button></div>'+
@@ -336,6 +346,18 @@ async function historyDetail(code){
       probImg+probTxt+'</div>'+rows;
   }catch(e){alert(e.message);}
 }
+async function editMemo(code){
+  const el=document.getElementById("memo-"+code);
+  const cur=el?el.dataset.memo||"":"";
+  const memo=prompt("수업 "+code+" 메모 (예: 3단원 극값 · 2반)",cur);
+  if(memo===null)return;
+  try{
+    const r=await fetch("/api/history/sessions/"+code+"/memo",{method:"PATCH",
+      headers:{"content-type":"application/json","x-history-password":historyPw},body:JSON.stringify({memo})});
+    const d=await r.json();if(!r.ok)throw new Error(d.error||"오류");
+    if(el){el.dataset.memo=d.memo;el.innerHTML=d.memo?'📝 '+esc(d.memo):'<span class="ph">+ 메모 추가</span>';}
+  }catch(e){alert(e.message);}
+}
 function downloadHistoryCsv(code){
   window.open("/api/history/sessions/"+code+"/csv?pw="+encodeURIComponent(historyPw),"_blank");
 }
@@ -352,7 +374,9 @@ function teacherCreate(){
     '<div id="pbox"></div></div>'+
   '<div class="field"><label>문제 글 (선택 — 사진 대신/함께 쓸 수 있어요)</label>'+
     '<textarea id="ptext" rows="2" placeholder="예) y = x ln x 의 그래프 개형을 미분을 이용하여 그리시오."></textarea></div>'+
-  '<div class="field"><label>모범답안 — 모범답안 이미지를 올리거나, 정답 함수를 글로 적으세요. <b>비워두면 AI가 스스로 모범답안을 만들어 채점합니다.</b></label>'+
+  '<div class="field"><label>수업 메모 (선택 — 지난 기록 목록에서 이 수업을 알아보기 위한 이름)</label>'+
+    '<input id="mtext" maxlength="100" placeholder="예) 3단원 극값 · 2반" /></div>'+
+  '<div class="field"><label>모범답안 —모범답안 이미지를 올리거나, 정답 함수를 글로 적으세요. <b>비워두면 AI가 스스로 모범답안을 만들어 채점합니다.</b></label>'+
     '<input id="atext" placeholder="예) y = x ln x (정의역 x>0) — 그래프 문제면 정답 함수를 적어주세요" />'+
     '<input id="afile" type="file" accept="image/*" style="display:none" />'+
     '<div id="abox" style="margin-top:10px"></div></div>'+
@@ -365,12 +389,13 @@ function teacherCreate(){
 async function createSession(){
   const problemText=$("#ptext").value.trim();
   const answerText=$("#atext").value.trim();
+  const memo=$("#mtext").value.trim();
   if(!teacherProblemImg && !problemText){$("#cerr").innerHTML='<p class="err">문제 사진을 올리거나 문제 글을 입력해 주세요.</p>';return;}
   const b=$("#startBtn");b.disabled=true;
   $("#cmsg").textContent="문제와 정답 그래프를 준비하는 중… (잠시 걸려요)";
   try{
     const r=await fetch("/api/sessions",{method:"POST",headers:{"content-type":"application/json"},
-      body:JSON.stringify({problemText,problemImage:teacherProblemImg,answerText,answerImage:teacherAnswerImg})});
+      body:JSON.stringify({problemText,problemImage:teacherProblemImg,answerText,answerImage:teacherAnswerImg,memo})});
     const d=await r.json();if(!r.ok)throw new Error(d.error||"오류");
     st.code=d.code;st.problem=problemText;st.problemImage=teacherProblemImg;teacherDash();
   }catch(e){$("#cerr").innerHTML='<p class="err">'+esc(e.message)+'</p>';b.disabled=false;$("#cmsg").textContent="";}
