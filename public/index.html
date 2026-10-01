@@ -110,7 +110,7 @@
   <header>
     <div style="display:flex;align-items:center;gap:12px">
       <img src="profile.png" alt="" class="profile-pic" onerror="this.style.display='none'" />
-      <div><h1>덕형 수학 배틀존</h1><p class="sub">미분으로 그래프를 그려 겨루는 곳</p></div>
+      <div><h1>덕형 수학 배틀존</h1><p class="sub">수능 50일 프로젝트</p></div>
     </div>
     <button class="btn ghost" onclick="goHome()" style="font-size:14px;padding:8px 14px">처음으로</button>
   </header>
@@ -141,7 +141,7 @@ function go(scr,arg,opt){
   else history.pushState(s,"",url);
   curKey=key;
 }
-function closeModals(){document.querySelectorAll(".modal").forEach(m=>m.remove());}
+function closeModals(){document.querySelectorAll(".modal").forEach(m=>m.remove());if(window.__modalPaste){window.__modalPaste=false;setPasteTargets([]);}}
 // 모달은 기록 한 칸을 차지 → 닫을 때 뒤로 한 칸
 function closeModal(){if(history.state&&history.state.modal)history.back();else closeModals();}
 async function fetchProblem(code){
@@ -393,6 +393,7 @@ async function historyDetail(code){
         '<span class="sc" style="margin-left:auto;font-family:\'Fraunces\';font-weight:700">'+x.score+'점</span></div>'+
         (x.summary?'<p style="margin:0 0 8px">'+mathText(x.summary)+'</p>':'')+
         (x.image?'<img class="preview" src="'+x.image+'" style="margin-bottom:8px">':'')+
+        (x.image?'<button class="toggle" style="margin-bottom:8px" onclick="useStudentAsModel(\''+esc(code)+'\',\''+esc(x.student_id)+'\',\''+esc(x.name)+'\')">⭐ 이 답안을 모범답안으로</button>':'')+
         feats+'</div>';
     }).join(""):'<p class="muted">제출 기록이 없어요.</p>';
     app().innerHTML='<div class="card"><div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">'+
@@ -403,8 +404,9 @@ async function historyDetail(code){
         '<button class="btn" style="flex:1" onclick="reopenSession(\''+esc(code)+'\')">▶ 이 수업 다시 열기</button>'+
         '<button class="btn" style="flex:1;background:#fff;color:var(--ink);border:1px solid var(--ink)" onclick="cloneSession(\''+esc(code)+'\')">＋ 같은 문제로 새 수업 (다른 반)</button></div>'+
       '<p class="muted" style="margin:8px 0 0;font-size:13px">다시 열기: 같은 코드·QR로 이어서 제출받고 순위도 합쳐져요. 새 수업: 새 코드가 생겨 반별로 순위를 따로 볼 수 있어요.</p>'+
-      '</div>'+rows;
+      '</div><div class="card" id="extraCard"></div>'+rows;
     window.__histSess=sess;
+    loadExtraCard(code);
   }catch(e){alert(e.message);}
 }
 function openDash(code,problem,problemImage){
@@ -508,6 +510,7 @@ function teacherDash(replace){
   '<div class="card"><div class="code-box"><div class="muted">학생 참여 코드</div>'+
   '<div class="code">'+st.code+'</div><div class="qr" id="qr"></div><div class="link">'+esc(link)+'</div>'+
   '<button class="toggle" style="margin-top:8px" onclick="copyLink(\''+esc(link)+'\')">링크 복사</button></div></div>'+
+  '<div class="card" id="extraCard"></div>'+
   '<div class="card"><div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">'+
   '<h2 style="margin:0">실시간 순위</h2><span class="count" id="cnt">0명 제출</span></div>'+
   (st.problemImage?'<img class="preview" src="'+st.problemImage+'" style="margin-bottom:10px">':'')+
@@ -515,7 +518,7 @@ function teacherDash(replace){
   '<div class="reveal-bar" id="revealBar"></div>'+
   '<div id="banner"></div><div id="board"><p class="muted">아직 제출이 없어요. 학생들이 코드로 참여하면 실시간으로 표시됩니다.</p></div></div>';
   try{if(window.QRCode)new QRCode($("#qr"),{text:link,width:150,height:150,colorDark:"#2a2520",colorLight:"#ffffff"});}catch(e){}
-  renderRevealBar();renderBoard();
+  renderRevealBar();renderBoard();loadExtraCard(st.code);
   pollBoard();st.poll=setInterval(pollBoard,2500);
 }
 function renderRevealBar(){
@@ -567,10 +570,86 @@ async function openDetail(sid){
       '<button class="toggle" onclick="closeModal()">닫기</button></div>'+
       '<div style="display:flex;align-items:baseline;gap:10px;margin-bottom:12px">'+badge(x.verdict)+'<span class="sc" style="font-family:\'Fraunces\';font-weight:900;font-size:26px">'+x.score+'점</span><span class="muted">'+x.okCount+'/'+x.total+' 항목</span></div>'+
       (x.summary?'<p style="margin:0 0 12px">'+mathText(x.summary)+'</p>':'')+
-      '<img class="preview" src="'+esc(x.image)+'" style="margin-bottom:12px">'+feats+
+      '<img class="preview" src="'+esc(x.image)+'" style="margin-bottom:8px">'+
+      '<button class="toggle" style="margin-bottom:12px" onclick="useStudentAsModel(\''+esc(st.code)+'\',\''+esc(x.studentId)+'\',\''+esc(x.name)+'\')">⭐ 이 답안을 모범답안으로</button>'+feats+
       answerGraphHTML(x.answerGraph)+'</div>';
     document.body.appendChild(m);drawAnswerGraph(x.answerGraph);
     history.pushState(Object.assign({},history.state,{modal:1}),"",location.href);
+  }catch(e){alert(e.message);}
+}
+// ── 모범답안 · 해설영상 (선생님 관리) ──
+// 선생님 전용 요청: 지난 기록 비밀번호 사용(없으면 한 번 물어봄)
+async function teacherPost(path,body){
+  if(!historyPw){
+    const p=prompt("선생님 비밀번호를 입력하세요 (지난 기록 보기 비밀번호)");
+    if(!p)return null;
+    historyPw=p;try{sessionStorage.setItem("mathbattle_hpw",p);}catch(e){}
+  }
+  const r=await fetch(path,{method:"POST",headers:{"content-type":"application/json","x-history-password":historyPw},body:JSON.stringify(body)});
+  const d=await r.json();
+  if(r.status===401){historyPw="";try{sessionStorage.removeItem("mathbattle_hpw");}catch(e){}}
+  if(!r.ok)throw new Error(d.error||"오류");
+  return d;
+}
+async function loadExtraCard(code){
+  const el=$("#extraCard");if(!el)return;
+  try{
+    const r=await fetch("/api/sessions/"+code+"/extras");const d=await r.json();if(!r.ok)throw new Error(d.error||"오류");
+    el.innerHTML='<div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap">'+
+      '<div><h2 style="margin:0 0 4px;font-size:18px">학생에게 보여줄 자료</h2>'+
+      '<div class="muted" style="font-size:14px">모범답안 '+(d.hasModel?'<b style="color:var(--green)">등록됨</b>':'없음')+
+      ' · 해설영상 '+(d.videoUrl?'<b style="color:var(--green)">등록됨</b>':'없음')+'</div></div>'+
+      '<button class="toggle" onclick="openExtraManager(\''+esc(code)+'\')">모범답안·해설영상 관리</button></div>'+
+      '<p class="muted" style="margin:6px 0 0;font-size:13px">등록하면 학생 채점 결과 화면 아래에 버튼이 나타나요. 등록하지 않으면 버튼이 보이지 않아요.</p>';
+  }catch(e){el.innerHTML='<p class="muted">자료 상태를 불러오지 못했어요.</p>';}
+}
+async function useStudentAsModel(code,sid,name){
+  if(!confirm(name+" 학생의 답안을 모범답안으로 등록할까요?\n(이미 등록된 모범답안은 바뀝니다)"))return;
+  try{const d=await teacherPost("/api/sessions/"+code+"/model",{fromStudentId:sid});if(!d)return;
+    alert("모범답안으로 등록했어요.");loadExtraCard(code);
+  }catch(e){alert(e.message);}
+}
+let extraPendingImg=null;
+async function openExtraManager(code){
+  closeModals();
+  const m=document.createElement("div");m.className="modal";m.onclick=(e)=>{if(e.target===m)closeModal();};
+  m.innerHTML='<div class="inner" id="xm"><p class="muted">불러오는 중…</p></div>';
+  document.body.appendChild(m);
+  history.pushState(Object.assign({},history.state,{modal:1}),"",location.href);
+  renderExtraManager(code);
+}
+async function renderExtraManager(code){
+  const box=$("#xm");if(!box)return;
+  extraPendingImg=null;
+  let d={},img=null;
+  try{
+    const r=await fetch("/api/sessions/"+code+"/extras");d=await r.json();if(!r.ok)throw new Error(d.error||"오류");
+    if(d.hasModel){const r2=await fetch("/api/sessions/"+code+"/model");if(r2.ok)img=(await r2.json()).image;}
+  }catch(e){box.innerHTML='<p class="err">'+esc(e.message)+'</p>';return;}
+  box.innerHTML='<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">'+
+    '<h2 style="margin:0">모범답안 · 해설영상</h2><button class="toggle" onclick="closeModal()">닫기</button></div>'+
+    '<h2 style="font-size:17px;margin:6px 0">📄 모범답안</h2>'+
+    (img?'<img class="preview" src="'+img+'" style="margin-bottom:8px"><button class="toggle" onclick="extraAction(\''+esc(code)+'\',\'model\',{clear:true},\'모범답안을 지울까요?\')">모범답안 지우기</button>'
+        :'<p class="muted" style="margin:0 0 8px">아직 없어요.</p>')+
+    '<div style="margin-top:12px"><input id="mfile" type="file" accept="image/*" style="display:none" /><div id="mbox"></div>'+
+    '<button class="btn block" style="margin-top:8px" onclick="uploadModel(\''+esc(code)+'\')">이 사진을 모범답안으로 '+(img?'바꾸기':'등록')+'</button></div>'+
+    (d.hasAnswerImage?'<button class="toggle" style="margin-top:8px" onclick="extraAction(\''+esc(code)+'\',\'model\',{fromAnswer:true})">수업 시작 때 올린 모범답안 사진 쓰기</button>':'')+
+    '<p class="muted" style="font-size:13px;margin:8px 0 0">학생 답안을 쓰려면 순위판(또는 지난 기록)에서 학생을 눌러 <b>⭐ 이 답안을 모범답안으로</b>를 누르세요.</p>'+
+    '<h2 style="font-size:17px;margin:20px 0 6px">▶ 해설영상</h2>'+
+    '<div class="field" style="margin-bottom:8px"><input id="vurl" placeholder="https://youtu.be/..." value="'+esc(d.videoUrl||"")+'" /></div>'+
+    '<div style="display:flex;gap:8px"><button class="btn" onclick="extraAction(\''+esc(code)+'\',\'video\',{url:$(\'#vurl\').value})">링크 저장</button>'+
+    (d.videoUrl?'<button class="toggle" onclick="extraAction(\''+esc(code)+'\',\'video\',{url:\'\'},\'해설영상 링크를 지울까요?\')">지우기</button>':'')+'</div>';
+  const mIn=makeImageInput({boxId:"mbox",fileId:"mfile",title:"모범답안 사진 넣기",hint:"손으로 쓴 풀이 사진, 화면 캡처 모두 가능",icon:"📄",onDone:(x)=>{extraPendingImg=x;}});
+  setPasteTargets([mIn]);window.__modalPaste=true;
+}
+async function uploadModel(code){
+  if(!extraPendingImg){alert("먼저 모범답안 사진을 넣어 주세요.");return;}
+  await extraAction(code,"model",{image:extraPendingImg});
+}
+async function extraAction(code,kind,body,ask){
+  if(ask&&!confirm(ask))return;
+  try{const d=await teacherPost("/api/sessions/"+code+"/"+kind,body);if(!d)return;
+    renderExtraManager(code);loadExtraCard(code);
   }catch(e){alert(e.message);}
 }
 function copyLink(l){navigator.clipboard&&navigator.clipboard.writeText(l);}
@@ -593,6 +672,7 @@ async function enterSession(){
 }
 let studentImg=null;
 function studentSolve(){
+  stopPoll();
   go("solve",st.code,{replace:!!(history.state&&history.state.scr==="join")});
   studentImg=null;
   app().innerHTML=
@@ -621,6 +701,7 @@ async function submitSolve(){
   }catch(e){$("#serr").innerHTML='<p class="err">'+esc(e.message)+'</p>';b.disabled=false;b.textContent="채점받기";}
 }
 function studentResult(d){
+  stopPoll();
   go("result",{code:st.code,student:st.student,d:d});
   const feats=(d.features||[]).map(f=>'<div class="feat"><span class="mk '+(f.ok?'ok':'no')+'">'+(f.ok?'○':'✕')+'</span><div><div class="fn">'+mathText(f.name)+(f.expected?' <span>— '+mathText(f.expected)+'</span>':'')+'</div>'+(f.comment?'<div class="cm">'+mathText(f.comment)+'</div>':'')+'</div></div>').join("");
   app().innerHTML='<div class="card"><h2 style="margin-bottom:6px">'+esc(st.student.name)+' 학생의 채점 결과</h2>'+
@@ -630,8 +711,32 @@ function studentResult(d){
     '<h2 style="font-size:17px;margin-top:14px">'+(d.type==="calc"?"채점 항목":"특징별 채점")+'</h2><div style="border:1px solid var(--line);border-radius:4px;padding:0 13px">'+feats+'</div>'+
     answerGraphHTML(d.answerGraph)+
     (d.correctSolution?'<button class="toggle" style="margin-top:14px" onclick="toggleSol(this)">정답 풀이 보기</button><div class="sol" id="sol" style="display:none">'+mathText(d.correctSolution)+'</div>':'')+
+    '<div id="extraBtns"></div>'+
     '<button class="btn block ghost" style="margin-top:16px" onclick="studentSolve()">다시 풀어서 제출하기</button></div>';
   drawAnswerGraph(d.answerGraph);
+  // 선생님이 나중에 등록해도 결과 화면에 버튼이 나타나도록 주기적으로 확인
+  loadStudentExtras();st.poll=setInterval(loadStudentExtras,15000);
+}
+async function loadStudentExtras(){
+  const el=$("#extraBtns");if(!el)return;
+  try{
+    const r=await fetch("/api/sessions/"+st.code+"/extras");if(!r.ok)return;const d=await r.json();
+    const btns=(d.hasModel?'<button class="btn" style="flex:1" onclick="showModelAnswer()">📄 모범답안 보기</button>':'')+
+      (d.videoUrl?'<a class="btn" style="flex:1;text-align:center;text-decoration:none" href="'+esc(d.videoUrl)+'" target="_blank" rel="noopener">▶ 해설영상 보기</a>':'');
+    el.innerHTML=btns?'<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:16px">'+btns+'</div>':'';
+  }catch(e){}
+}
+async function showModelAnswer(){
+  try{
+    const r=await fetch("/api/sessions/"+st.code+"/model");const d=await r.json();if(!r.ok)throw new Error(d.error||"오류");
+    closeModals();
+    const m=document.createElement("div");m.className="modal";m.onclick=(e)=>{if(e.target===m)closeModal();};
+    m.innerHTML='<div class="inner"><div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">'+
+      '<h2 style="margin:0">모범답안</h2><button class="toggle" onclick="closeModal()">닫기</button></div>'+
+      '<img class="preview" src="'+esc(d.image)+'"></div>';
+    document.body.appendChild(m);
+    history.pushState(Object.assign({},history.state,{modal:1}),"",location.href);
+  }catch(e){alert(e.message);}
 }
 function toggleSol(b){const el=$("#sol");const on=el.style.display==="none";el.style.display=on?"block":"none";b.textContent=on?"정답 풀이 닫기":"정답 풀이 보기";}
 

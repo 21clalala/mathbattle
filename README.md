@@ -102,3 +102,17 @@ alter table sessions add column if not exists memo text;
 alter table sessions add column if not exists answer_image text;
 ```
   (이 열이 생기기 전에 만든 수업은 모범답안 이미지가 저장되어 있지 않아, 다시 열면 모범답안 글/AI 풀이 기준으로 채점됩니다.)
+
+## 업데이트: 모범답안 보기 · 해설영상 보기
+- 소개 문구를 "수능 50일 프로젝트"로 바꿨습니다.
+- 선생님 순위판과 지난 기록 상세 화면에 **학생에게 보여줄 자료** 칸이 생겼습니다. "모범답안·해설영상 관리"에서 수업 중이든 나중이든 등록할 수 있습니다.
+  - 모범답안: 사진 직접 올리기 / 학생 답안을 모범답안으로(학생을 눌러 "⭐ 이 답안을 모범답안으로") / 수업 시작 때 올린 모범답안 사진 쓰기
+  - 해설영상: 유튜브 등 링크 붙여넣기
+  - 등록·수정할 때 지난 기록 비밀번호를 한 번 묻습니다(같은 탭에서는 기억).
+- 학생 채점 결과 화면 아래에 **📄 모범답안 보기 / ▶ 해설영상 보기** 버튼이 나타납니다. 등록하지 않은 것은 버튼이 보이지 않고, 나중에 등록하면 결과 화면에 15초 안에 나타납니다.
+- Supabase SQL Editor에서 한 번 실행하세요:
+
+```sql
+alter table sessions add column if not exists model_image text;
+alter table sessions add column if not exists video_url text;
+```

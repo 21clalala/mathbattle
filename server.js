@@ -44,6 +44,8 @@ async function sbSaveSession(s) {
     const extra = {};
     if (s.memo) extra.memo = s.memo;
     if (s.answerImage) extra.answer_image = s.answerImage;
+    if (s.modelImage) extra.model_image = s.modelImage;
+    if (s.videoUrl) extra.video_url = s.videoUrl;
     if (Object.keys(extra).length) {
       // memo·answer_image 열이 아직 없는 DB여도 수업 자체는 저장되도록 빼고 한 번 더 시도
       try { await save(Object.assign({}, row, extra)); }
@@ -71,6 +73,8 @@ async function getSession(rawCode) {
       createdAt: r.created_at ? Date.parse(r.created_at) : Date.now(),
       submissions: new Map(),
       answerGraph: r.answer_graph || null,
+      modelImage: r.model_image || null,
+      videoUrl: r.video_url || "",
     };
     for (const x of subs) {
       s.submissions.set(x.student_id, {
@@ -361,6 +365,66 @@ app.get("/api/sessions/:code/csv", async (req, res) => {
   res.send(csv);
 });
 
+// ── 학생용 모범답안 · 해설영상 ──
+// 학생 화면에 버튼을 보여줄지 판단용 (사진은 /model에서 따로 받음)
+app.get("/api/sessions/:code/extras", async (req, res) => {
+  const s = await getSession(req.params.code);
+  if (!s) return res.status(404).json({ error: "세션 없음" });
+  res.json({ hasModel: !!s.modelImage, videoUrl: s.videoUrl || "", hasAnswerImage: !!s.answerImage });
+});
+app.get("/api/sessions/:code/model", async (req, res) => {
+  const s = await getSession(req.params.code);
+  if (!s || !s.modelImage) return res.status(404).json({ error: "모범답안이 아직 없어요." });
+  res.json({ image: s.modelImage });
+});
+async function sbPatchSession(code, fields) {
+  if (!SB_ON) return;
+  await sbFetch("sessions?code=eq." + encodeURIComponent(code), { method: "PATCH", body: JSON.stringify(fields) });
+}
+const COLUMN_HINT = " Supabase sessions 표에 model_image, video_url 열이 있는지 확인해 주세요.";
+// 모범답안 등록: 직접 올린 사진 / 학생 답안 / 처음에 올린 채점용 모범답안 / 지우기 — 선생님
+app.post("/api/sessions/:code/model", async (req, res) => {
+  if (!checkPassword(req, res)) return;
+  const s = await getSession(req.params.code);
+  if (!s) return res.status(404).json({ error: "수업을 찾을 수 없어요." });
+  const b = req.body || {};
+  let img = null;
+  if (b.clear) img = null;
+  else if (b.fromStudentId) {
+    const x = s.submissions.get(String(b.fromStudentId));
+    if (!x || !x.image) return res.status(404).json({ error: "그 학생의 답안을 찾을 수 없어요." });
+    img = x.image;
+  } else if (b.fromAnswer) {
+    if (!s.answerImage) return res.status(404).json({ error: "처음에 올린 모범답안 사진이 없어요." });
+    img = s.answerImage;
+  } else if (typeof b.image === "string" && b.image.startsWith("data:image/")) img = b.image;
+  else return res.status(400).json({ error: "모범답안 사진이 필요해요." });
+  try {
+    await sbPatchSession(s.code, { model_image: img });
+    s.modelImage = img;
+    res.json({ hasModel: !!img });
+  } catch (e) {
+    console.error("[sb model]", e.message);
+    res.status(500).json({ error: "모범답안을 저장하지 못했어요." + COLUMN_HINT });
+  }
+});
+// 해설영상 링크 등록(빈 값이면 지우기) — 선생님
+app.post("/api/sessions/:code/video", async (req, res) => {
+  if (!checkPassword(req, res)) return;
+  const s = await getSession(req.params.code);
+  if (!s) return res.status(404).json({ error: "수업을 찾을 수 없어요." });
+  let url = String((req.body && req.body.url) || "").trim().slice(0, 500);
+  if (url && !/^https?:\/\//i.test(url)) url = "https://" + url;
+  try {
+    await sbPatchSession(s.code, { video_url: url });
+    s.videoUrl = url;
+    res.json({ videoUrl: url });
+  } catch (e) {
+    console.error("[sb video]", e.message);
+    res.status(500).json({ error: "해설영상 링크를 저장하지 못했어요." + COLUMN_HINT });
+  }
+});
+
 // ── 지난 기록 보기 (선생님 전용, 비밀번호 잠금) ──
 function checkPassword(req, res) {
   if (!HISTORY_PASSWORD) { res.status(503).json({ error: "기록 보기 비밀번호가 서버에 설정되지 않았어요." }); return false; }
@@ -432,6 +496,8 @@ app.post("/api/history/sessions/:code/clone", async (req, res) => {
     createdAt: Date.now(),
     submissions: new Map(),
     answerGraph: src.answerGraph,
+    modelImage: src.modelImage || null,
+    videoUrl: src.videoUrl || "",
   };
   sessions.set(code, s);
   await sbSaveSession(s);
